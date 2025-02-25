@@ -19,13 +19,15 @@ from ray.tune.integration.wandb import WandbLoggerCallback
 
 #from vmas import make_env
 from vmas.simulator.environment import Wrapper
-from exploration import MyScenario
+#from exploration import MyScenario
+from corridors import MyScenario
 
-scenario_name = "exploration"
+#scenario_name = "exploration"
+scenario_name = "corridors"
 
 # Scenario specific variables.
 # When modifying this also modify env_config and env_creator
-n_agents = 3
+n_agents = 2
 
 # Common variables
 continuous_actions = True

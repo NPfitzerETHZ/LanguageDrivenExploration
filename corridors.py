@@ -6,10 +6,10 @@ from torch import Tensor
 import random
 
 from vmas import render_interactively
-from vmas.simulator.core import Agent,Landmark, Sphere, Box, World
+from vmas.simulator.core import Agent,Landmark, Sphere, Box, World, Line
 from vmas.simulator.scenario import BaseScenario
 from vmas.simulator.sensors import Lidar
-from vmas.simulator.utils import Color, ScenarioUtils 
+from vmas.simulator.utils import Color, ScenarioUtils  
 
 if typing.TYPE_CHECKING:
     from vmas.simulator.rendering import Geom
@@ -32,14 +32,14 @@ class MyScenario(BaseScenario):
         self._create_occupancy_grid(batch_dim)
         self._create_global_heading_vis(world)
         self._initialize_rewards(batch_dim)
-        self._extras()
+        self.spawn_map(world)
         return world
     
     def _load_config(self,kwargs):
 
         self.num_envs = kwargs.pop("num_envs", 96)
-        self.n_agents = kwargs.pop("n_agents", 5)
-        self.n_targets = kwargs.pop("n_targets", 5)
+        self.n_agents = kwargs.pop("n_agents", 2)
+        self.n_targets = kwargs.pop("n_targets", 4)
         self.n_obstacles = kwargs.pop("n_obstacle",5)
         self.x_semidim = kwargs.pop("x_semidim", 1.0)
         self.y_semidim = kwargs.pop("y_semidim", 1.0)
@@ -58,7 +58,7 @@ class MyScenario(BaseScenario):
         self.shared_reward = kwargs.pop("shared_reward", False)  # Reward for finding a target
         self.shared_final_reward = kwargs.pop("shared_final_reward", True) # Reward for finding all targets, if targets_respawn false
 
-        self.add_obstacles = kwargs.pop("add_obstacles", True)
+        self.add_obstacles = kwargs.pop("add_obstacles", False)  # This isn't implemented yet
 
         # Novelty rewards
         self.use_count_rew = kwargs.pop("use_count_rew", False)
@@ -106,13 +106,17 @@ class MyScenario(BaseScenario):
         self.target_attribute_objective = kwargs.pop("target_attribute_objective", False)
         #===================
 
+        # Corridors
+        self.num_corridors = 3
+
         # Grid
-        self.num_grid_cells = 25 # Must be n^2 with n = width 
+        self.num_grid_cells = (2*self.num_corridors+1)**2 # Must be n^2 with n = width 
         self.mini_grid_dim = 3
 
         self.plot_grid = True
         self.visualize_semidims = False
 
+    
     def _create_world(self, batch_dim: int):
         """Create and return the simulation world."""
         return World(
@@ -137,7 +141,7 @@ class MyScenario(BaseScenario):
             self._initialize_agent_rewards(agent, batch_dim)
             self._create_agent_state_histories(agent)
             world.add_agent(agent)
-
+    
     def _create_agent_sensors(self, world):
         """Create and return sensors for agents."""
         sensors = [
@@ -190,7 +194,13 @@ class MyScenario(BaseScenario):
             for target in self._secondary_targets:
                 world.add_landmark(target)
             self.target_groups.append(self._secondary_targets)
+    
+    def _create_global_heading_vis(self,world):
 
+        if self.global_heading_objective:
+            self.heading_landmark = Landmark(f"heading", collide=False, movable=False, shape=Sphere(radius=self.location_radius), color=Color.YELLOW)
+            world.add_landmark(self.heading_landmark)
+    
     def _create_obstacles(self, world):
         """Create obstacle landmarks and add them to the world."""
         if not self.add_obstacles:
@@ -201,12 +211,10 @@ class MyScenario(BaseScenario):
         ]
         for obstacle in self._obstacles:
             world.add_landmark(obstacle)
-        
-    def _create_global_heading_vis(self,world):
+    
+    def _create_occupancy_grid(self, batch_dim):
 
-        if self.global_heading_objective:
-            self.heading_landmark = Landmark(f"heading", collide=False, movable=False, shape=Sphere(radius=self.location_radius), color=Color.YELLOW)
-            world.add_landmark(self.heading_landmark)
+        self.occupancy_grid = OccupancyGrid(batch_size=batch_dim,x_dim=self.x_semidim*2,y_dim=self.y_semidim*2,num_cells=self.num_grid_cells,device=self.device)
 
     def _initialize_rewards(self, batch_dim):
 
@@ -233,16 +241,242 @@ class MyScenario(BaseScenario):
         self.target_class = torch.zeros(batch_dim, dtype=torch.int, device=self.device)
         self.targets_pos = torch.zeros((batch_dim,len(self.target_groups),self.n_targets,2), device=self.device)
         #==================
-
-    def _create_occupancy_grid(self, batch_dim):
-
-        self.occupancy_grid = OccupancyGrid(batch_size=batch_dim,x_dim=self.x_semidim*2,y_dim=self.y_semidim*2,num_cells=self.num_grid_cells,device=self.device)
+    
+    def spawn_map(self, world: World):
+        """Spawns the map with horizontal and vertical walls, and defines hotspots."""
         
-    def _extras(self):
+        # Compute wall lengths
+        self.h_wall_length = (2 * self.x_semidim) / (self.num_corridors * 2 + 1) # one cell width
+        v_wall_length = (2 * self.y_semidim) / (self.num_corridors * 2 + 1) # one cell height
 
-        if self.observe_jointpos_history:
-            self.jointpos_history = JointPosHistory(self.n_agents,self.num_envs,self.pos_history_length,self.pos_dim,self.device)
+        self.corridor_length = ((self.num_corridors * 2 + 1) // 2)*v_wall_length
+        self.main_corridor_length = ((self.num_corridors * 2 + 1) % 2)*v_wall_length
 
+        # Create horizontal walls
+        self.h_walls = [
+            Landmark(
+                name=f"wall_h {i}",
+                collide=True,
+                shape=Line(length=self.h_wall_length),
+                color=Color.BLACK,
+            )
+            for i in range((self.num_corridors * 2 + 1) * 2)
+        ]
+        
+        for wall in self.h_walls:
+            world.add_landmark(wall)
+
+        # Create vertical walls
+        self.v_walls = [
+            Landmark(
+                name=f"wall_v {i}",
+                collide=True,
+                shape=Line(length=self.main_corridor_length if i < 2 else self.corridor_length),
+                color=Color.BLACK,
+            )
+            for i in range(2 + 4 * self.num_corridors)
+        ]
+
+        for wall in self.v_walls:
+            world.add_landmark(wall)
+        
+        # Define Hotspots
+        self.hotspots = [
+            (-self.x_semidim + self.agent_radius, 0),  # East extremity
+            (self.x_semidim - self.agent_radius, 0)    # West extremity
+        ]
+        
+        # North/South hotspots
+        self.hotspots += [
+            (
+                -self.x_semidim + 2 * self.h_wall_length * (i // 2 + 3/4),
+                (1 if i % 2 == 0 else -1) * (self.y_semidim - self.agent_radius)
+            )
+            for i in range(self.num_corridors * 2)
+        ]
+
+        self.rectangles = []
+        self.rectangles += [
+            (
+                -self.x_semidim,-self.main_corridor_length/2,2*self.x_semidim,2*self.y_semidim
+            )
+        ]
+        for i in range(self.num_corridors):
+            self.rectangles.append((-self.x_semidim + self.h_wall_length * (i  + 1),-self.y_semidim,self.h_wall_length,2*self.y_semidim))
+
+        self.reset_map()
+
+    def reset_map(self, env_index):
+
+        if env_index is None:
+            env_index = torch.arange(self.world.batch_dim, device=self.device)
+
+        for i, landmark in enumerate(self.h_walls):
+
+            landmark.set_pos(
+                torch.tensor(
+                    [
+                        (
+                            -self.x_semidim + (i // 2) * self.h_wall_length + self.h_wall_length / 2
+                        ),
+                        (1 if i % 2 == 0 else -1) * (self.main_corridor_length * 1/2 if (i // 2) % 2 == 0 else self.y_semidim) 
+                    ],
+                    dtype=torch.float32,
+                    device=self.world.device,
+                ),
+                batch_index=env_index,
+            )
+            landmark.set_rot(
+                torch.tensor(
+                    [0],
+                    dtype=torch.float32,
+                    device=self.world.device,
+                ),
+                batch_index=env_index,
+            )
+        
+        for i, landmark in enumerate(self.v_walls):
+
+            landmark.set_rot(
+                    torch.tensor(
+                        [torch.pi/2],
+                        dtype=torch.float32,
+                        device=self.world.device,
+                    ),
+                    batch_index=env_index,
+                )
+
+            if i < 2: # Extremities
+
+                landmark.set_pos(
+                    torch.tensor(
+                        [
+                            (
+                                -self.x_semidim + i * self.x_semidim * 2
+                            ),
+                            0
+                        ],
+                        dtype=torch.float32,
+                        device=self.world.device,
+                    ),
+                    batch_index=env_index,
+                )
+
+            else:
+                landmark.set_pos(
+                    torch.tensor(
+                        [
+                            (
+                                -self.x_semidim + (i // 2) * self.h_wall_length
+                            ),
+                            (1 if i % 2 == 0 else -1) * (self.y_semidim-self.corridor_length/2)
+                        ],
+                        dtype=torch.float32,
+                        device=self.world.device,
+                    ),
+                    batch_index=env_index,
+                )
+
+    def reset_world_at(self, env_index = None):
+        """Reset the world for a given environment index."""
+
+        if env_index is None: # Apply to all environements
+
+            self.all_time_covered_targets = torch.full(
+                (self.world.batch_dim, self.n_targets), False, device=self.world.device
+            )
+            self.agent_stopped = torch.full(
+                (self.world.batch_dim, self.n_agents), False, device=self.world.device
+            )
+
+            # Randomize search coordinates
+            if self.global_heading_objective:
+                indices = torch.randint(0, 4, (self.world.batch_dim,), device=self.device)
+                self.search_coordinates = self.possible_coordinates[indices]
+                self.search_encoding = torch.stack([(indices >> 1) & 1, indices & 1], dim=-1)
+                self.heading_landmark.set_pos(self.search_coordinates)
+
+            # Randomize target class
+            if self.target_attribute_objective:
+                self.target_class = torch.randint(0, len(self.target_groups), (self.world.batch_dim,), device=self.device)
+
+            # Initialize occupency gird
+            if self.use_occupancy_grid_rew:
+                self.occupancy_grid.reset_all()
+        else:
+
+            self.reset_map(env_index)
+            
+            self.all_time_covered_targets[env_index] = False
+            self.targets_pos[env_index].zero_()
+
+            # Reset histories
+            for agent in self.world.agents:
+                if self.use_count_rew:
+                    agent.count_based_rew.reset(env_index)
+                if self.use_entropy_rew:
+                    agent.entropy_based_rew.reset(env_index)
+                if self.observe_pos_history:
+                    agent.position_history.reset(env_index)
+                if self.observe_vel_history:
+                    agent.velocity_history.reset(env_index)
+                agent.oneshot_signal[env_index] = 0.0
+            if self.observe_jointpos_history:
+                self.jointpos_history.reset(env_index)
+            
+            # Randomize max target count
+            random_tensor = torch.randint(1, self.n_targets + 1, (self.world.batch_dim,))
+            self.max_target_count[env_index] = random_tensor[env_index] / self.n_targets
+            self.num_covered_targets[env_index].zero_()
+
+            # Randomize search coordinates
+            if self.global_heading_objective:
+                indices = torch.randint(0, 4, (self.world.batch_dim,), device=self.device)
+                self.search_coordinates[env_index] = self.possible_coordinates[indices[env_index]]
+                self.search_encoding[env_index] = torch.tensor([(indices[env_index] >> 1) & 1,(indices[env_index] & 1)], device=self.device)
+                self.heading_landmark.set_pos(self.search_coordinates[env_index],env_index)
+
+            # Randomize target class
+            if self.target_attribute_objective:
+                rand = torch.randint(0, len(self.target_groups), (self.world.batch_dim,), device=self.device)
+                self.target_class[env_index] = rand[env_index]
+
+        self._spawn_entities_randomly(env_index)
+    
+    def _spawn_entities_randomly(self, env_index):
+
+        """Spawn agents, targets, and obstacles randomly while ensuring valid distances."""
+        entities = self._targets[: self.n_targets] + self.world.agents
+        if self.add_obstacles:
+            entities += self._obstacles[: self.n_obstacles]
+        if self.target_attribute_objective:
+            entities += self._secondary_targets[: self.n_targets]
+
+        assert len(entities) <= len(self.hotspots), "Not enough hotspots for all entities"
+        
+        # Shuffle hotspots to ensure randomness
+        random.shuffle(self.hotspots)
+        
+        # Assign each entity a unique hotspot
+        for entity, hotspot in zip(entities, self.hotspots):
+            entity.set_pos(torch.tensor(hotspot),batch_index=env_index)
+        
+        # Initialize occupancy grid with new obstacle positions
+        if self.use_occupancy_grid_rew:
+            self.occupancy_grid.reset_env(env_index)
+
+    
+    def _get_outside_pos(self, env_index):
+        """Get a position far outside the environment to hide entities."""
+        return torch.empty(
+            (
+                (1, self.world.dim_p)
+                if env_index is not None
+                else (self.world.batch_dim, self.world.dim_p)
+            ),
+            device=self.world.device,
+        ).uniform_(-1000 * self.world.x_semidim, -10 * self.world.x_semidim)
+    
     def observation(self, agent: Agent):
 
         lidar_measures = []
@@ -303,113 +537,7 @@ class MyScenario(BaseScenario):
             agent.velocity_history.update(vel)
 
         return obs
-
-    def reset_world_at(self, env_index: int = None):
-        """Reset the world for a given environment index."""
-        if env_index is None: # Apply to all environements
-
-            self.all_time_covered_targets = torch.full(
-                (self.world.batch_dim, self.n_targets), False, device=self.world.device
-            )
-            self.agent_stopped = torch.full(
-                (self.world.batch_dim, self.n_agents), False, device=self.world.device
-            )
-
-            # Randomize search coordinates
-            if self.global_heading_objective:
-                indices = torch.randint(0, 4, (self.world.batch_dim,), device=self.device)
-                self.search_coordinates = self.possible_coordinates[indices]
-                self.search_encoding = torch.stack([(indices >> 1) & 1, indices & 1], dim=-1)
-                self.heading_landmark.set_pos(self.search_coordinates)
-
-            # Randomize target class
-            if self.target_attribute_objective:
-                self.target_class = torch.randint(0, len(self.target_groups), (self.world.batch_dim,), device=self.device)
-
-            # Initialize occupency gird
-            if self.use_occupancy_grid_rew:
-                self.occupancy_grid.reset_all()
-
-            # Do I need this?
-            # # Reset novelty rewards
-            # for agent in self.world.agents:
-            #     if self.use_count_rew:
-            #         agent.count_based_rew.reset()
-            #     if self.use_entropy_rew:
-            #         agent.entropy_based_rew.reset()
-            #     if self.observe_pos_history:
-            #         agent.position_history.reset()
-            #     if self.observe_vel_history:
-            #         agent.velocity_history.reset()
-            #     agent.oneshot_signal.zero_()
-            # if self.observe_jointpos_history:
-            #     self.jointpos_history.reset()
-
-        else:
-            
-            self.all_time_covered_targets[env_index] = False
-            self.targets_pos[env_index].zero_()
-
-            # Reset histories
-            for agent in self.world.agents:
-                if self.use_count_rew:
-                    agent.count_based_rew.reset(env_index)
-                if self.use_entropy_rew:
-                    agent.entropy_based_rew.reset(env_index)
-                if self.observe_pos_history:
-                    agent.position_history.reset(env_index)
-                if self.observe_vel_history:
-                    agent.velocity_history.reset(env_index)
-                agent.oneshot_signal[env_index] = 0.0
-            if self.observe_jointpos_history:
-                self.jointpos_history.reset(env_index)
-            
-            # Randomize max target count
-            random_tensor = torch.randint(1, self.n_targets + 1, (self.world.batch_dim,))
-            self.max_target_count[env_index] = random_tensor[env_index] / self.n_targets
-            self.num_covered_targets[env_index].zero_()
-
-            # Randomize search coordinates
-            if self.global_heading_objective:
-                indices = torch.randint(0, 4, (self.world.batch_dim,), device=self.device)
-                self.search_coordinates[env_index] = self.possible_coordinates[indices[env_index]]
-                self.search_encoding[env_index] = torch.tensor([(indices[env_index] >> 1) & 1,(indices[env_index] & 1)], device=self.device)
-                self.heading_landmark.set_pos(self.search_coordinates[env_index],env_index)
-
-            # Randomize target class
-            if self.target_attribute_objective:
-                rand = torch.randint(0, len(self.target_groups), (self.world.batch_dim,), device=self.device)
-                self.target_class[env_index] = rand[env_index]
-
-        self._spawn_entities_randomly(env_index)
-
-        
-    def _spawn_entities_randomly(self, env_index: int):
-
-        """Spawn agents, targets, and obstacles randomly while ensuring valid distances."""
-        entities = self._targets[: self.n_targets] + self.world.agents
-        if self.add_obstacles:
-            entities += self._obstacles[: self.n_obstacles]
-        if self.target_attribute_objective:
-            entities += self._secondary_targets[: self.n_targets]
-
-        ScenarioUtils.spawn_entities_randomly(
-            entities=entities,
-            world=self.world,
-            env_index=env_index,
-            min_dist_between_entities=self._min_dist_between_entities,
-            x_bounds=(-self.world.x_semidim, self.world.x_semidim),
-            y_bounds=(-self.world.y_semidim, self.world.y_semidim),
-        )
-
-        for targets in self.target_groups:
-            for target in targets[self.n_targets :]:
-                target.set_pos(self._get_outside_pos(env_index), batch_index=env_index)
-        
-        # Initialize occupency grid with new obstacle positions
-        if self.use_occupancy_grid_rew:
-                self.occupancy_grid.reset_env(env_index)
-
+    
     def reward(self, agent: Agent):
         """Compute the reward for a given agent."""
         is_first = agent == self.world.agents[0]
@@ -611,18 +739,7 @@ class MyScenario(BaseScenario):
                 # Apply movement penalty if the agent has stopped
                 movement_penalty = torch.linalg.norm(agent.state.vel[self.agent_stopped[:, agent_index]], dim=-1) * -1.0
                 agent.oneshot_rew[self.agent_stopped[:, agent_index]] = movement_penalty
-
-    def _get_outside_pos(self, env_index):
-        """Get a position far outside the environment to hide entities."""
-        return torch.empty(
-            (
-                (1, self.world.dim_p)
-                if env_index is not None
-                else (self.world.batch_dim, self.world.dim_p)
-            ),
-            device=self.world.device,
-        ).uniform_(-1000 * self.world.x_semidim, -10 * self.world.x_semidim)
-
+    
     def info(self, agent: Agent) -> Dict[str, Tensor]:
         """Return auxiliary information about the agent."""
         return {
@@ -663,21 +780,21 @@ class MyScenario(BaseScenario):
                     geoms.append(line)
         
         # Render Occupancy Grid lines
-        grid = self.occupancy_grid
-        for i in range(grid.grid_width + 1):  # Vertical lines
-            x = i * grid.cell_size_x - grid.x_dim / 2
-            line = rendering.Line((x, -grid.y_dim / 2), (x, grid.y_dim / 2), width=1)
-            line.set_color(*Color.GRAY.value)
-            geoms.append(line)
+        if self.plot_grid:
+            grid = self.occupancy_grid
+            for i in range(grid.grid_width + 1):  # Vertical lines
+                x = i * grid.cell_size_x - grid.x_dim / 2
+                line = rendering.Line((x, -grid.y_dim / 2), (x, grid.y_dim / 2), width=1)
+                line.set_color(*Color.BLUE.value)
+                geoms.append(line)
 
-        for j in range(grid.grid_height + 1):  # Horizontal lines
-            y = j * grid.cell_size_y - grid.y_dim / 2
-            line = rendering.Line((-grid.x_dim / 2, y), (grid.x_dim / 2, y), width=1)
-            line.set_color(*Color.GRAY.value)
-            geoms.append(line)
+            for j in range(grid.grid_height + 1):  # Horizontal lines
+                y = j * grid.cell_size_y - grid.y_dim / 2
+                line = rendering.Line((-grid.x_dim / 2, y), (grid.x_dim / 2, y), width=1)
+                line.set_color(*Color.BLUE.value)
+                geoms.append(line)
 
         # Render grid cells with color based on visit normalization
-        if self.plot_grid:
             for i in range(grid.grid_width):
                 for j in range(grid.grid_height):
                     x = i * grid.cell_size_x - grid.x_dim / 2
@@ -691,4 +808,3 @@ class MyScenario(BaseScenario):
                     geoms.append(rect)
 
         return geoms
-    
