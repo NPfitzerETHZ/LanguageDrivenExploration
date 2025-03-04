@@ -1,46 +1,25 @@
-import typing
-from typing import Dict, List
-
 import torch
-from torch import Tensor
 import random
 import math
-
-from vmas import render_interactively
-from vmas.simulator.core import Agent,Landmark, Sphere, Box, World
 from vmas.simulator.scenario import BaseScenario
-from vmas.simulator.sensors import Lidar
+from vmas.simulator.core import Agent,Landmark, Sphere, Box, World
 from vmas.simulator.utils import Color, ScenarioUtils 
 
-if typing.TYPE_CHECKING:
-    from vmas.simulator.rendering import Geom
-
-import torch
 from histories import VelocityHistory, PositionHistory, JointPosHistory
 from occupancy_grid import OccupancyGrid
 from rewards import CountBasedReward, EntropyBasedReward, JointEntropyBasedReward
 
-class MyScenario(BaseScenario):
+from vmas.simulator.sensors import Lidar
 
-    def make_world(self, batch_dim: int, device: torch.device, **kwargs):
-        """Initialize the world and entities."""
-        self.device = device
-        self._load_config(kwargs)
-        world = self._create_world(batch_dim)
-        self._create_agents(world, batch_dim)
-        self._create_targets(world)
-        self._create_obstacles(world)
-        self._create_occupancy_grid(batch_dim)
-        self._create_global_heading_vis(world)
-        self._initialize_rewards(batch_dim)
-        self._extras()
-        return world
+from typing import Dict
+
+class MyScenario(BaseScenario):
     
     def _load_config(self,kwargs):
 
         self.num_envs = kwargs.pop("num_envs", 96)
-        self.n_agents = kwargs.pop("n_agents", 5)
-        self.n_targets = kwargs.pop("n_targets", 5)
+        self.n_agents = kwargs.pop("n_agents", 2)
+        self.n_targets = kwargs.pop("n_targets", 4)
         self.n_obstacles = kwargs.pop("n_obstacle",5)
         self.x_semidim = kwargs.pop("x_semidim", 1.0)
         self.y_semidim = kwargs.pop("y_semidim", 1.0)
@@ -48,8 +27,9 @@ class MyScenario(BaseScenario):
         self._lidar_range = kwargs.pop("lidar_range", 0.35)
         self._covering_range = kwargs.pop("covering_range", 0.15)
 
+        self.use_lidar = kwargs.pop("use_lidar", False)
         self.use_agent_lidar = kwargs.pop("use_agent_lidar", False)
-        self.use_obstacle_lidar = kwargs.pop("use_obstacle_lidar", True)
+        self.use_obstacle_lidar = kwargs.pop("use_obstacle_lidar", False)
         self.n_lidar_rays_entities = kwargs.pop("n_lidar_rays_entities", 15)
         self.n_lidar_rays_agents = kwargs.pop("n_lidar_rays_agents", 12)
 
@@ -59,7 +39,7 @@ class MyScenario(BaseScenario):
         self.shared_reward = kwargs.pop("shared_reward", False)  # Reward for finding a target
         self.shared_final_reward = kwargs.pop("shared_final_reward", True) # Reward for finding all targets, if targets_respawn false
 
-        self.add_obstacles = kwargs.pop("add_obstacles", True)
+        self.add_obstacles = kwargs.pop("add_obstacles", False)  # This isn't implemented yet
 
         # Novelty rewards
         self.use_count_rew = kwargs.pop("use_count_rew", False)
@@ -75,6 +55,7 @@ class MyScenario(BaseScenario):
         self.covering_rew_coeff = kwargs.pop("covering_rew_coeff", 5.0) # Large reward for finding a target
         self.false_covering_penalty_coeff = kwargs.pop("false_covering_penalty_coeff", -0.25) # Penalty for covering wrong target
         self.time_penalty = kwargs.pop("time_penalty", 0)
+        ScenarioUtils.check_kwargs_consumed(kwargs)
 
         self._comms_range = self._lidar_range*0.001
         self.min_collision_distance = 0.005
@@ -88,7 +69,7 @@ class MyScenario(BaseScenario):
         # Histories
         self.pos_history_length = 10
         self.pos_dim = 2
-        self.observe_pos_history = kwargs.pop("observe_pos_history", True)
+        self.observe_pos_history = kwargs.pop("observe_pos_history", False)
         self.observe_jointpos_history = kwargs.pop("observe_jointpos_history", False)
 
         self.vel_history_length = 30
@@ -103,16 +84,20 @@ class MyScenario(BaseScenario):
         self.global_heading_objective = kwargs.pop("global_heading_objective", False)
         self.location_radius = kwargs.pop("location:radius", 0.5) 
         # 3) Attribute
-        self.target_attribute_objective = kwargs.pop("target_attribute_objective", False)
+        self.target_attribute_objective = kwargs.pop("target_attribute_objective", True)
         #===================
 
+        # Corridors
+        self.num_corridors = 2
+
         # Grid
-        self.num_grid_cells = 25 # Must be n^2 with n = width 
+        self.observe_grid = kwargs.pop("observe_grid",False)
+        self.num_grid_cells = (2*self.num_corridors+1)**2 # Must be n^2 with n = width 
         self.mini_grid_dim = 3
 
         self.plot_grid = True
         self.visualize_semidims = False
-
+    
     def _create_world(self, batch_dim: int):
         """Create and return the simulation world."""
         return World(
@@ -132,12 +117,12 @@ class MyScenario(BaseScenario):
                 name=f"agent_{i}",
                 collide=True,
                 shape=Sphere(radius=0.05),
-                sensors=self._create_agent_sensors(world),
+                sensors=(self._create_agent_sensors(world) if self.use_lidar else []),
             )
             self._initialize_agent_rewards(agent, batch_dim)
             self._create_agent_state_histories(agent)
             world.add_agent(agent)
-
+    
     def _create_agent_sensors(self, world):
         """Create and return sensors for agents."""
         sensors = [
@@ -190,7 +175,7 @@ class MyScenario(BaseScenario):
             for target in self._secondary_targets:
                 world.add_landmark(target)
             self.target_groups.append(self._secondary_targets)
-
+    
     def _create_obstacles(self, world):
         """Create obstacle landmarks and add them to the world."""
         if not self.add_obstacles:
@@ -201,12 +186,23 @@ class MyScenario(BaseScenario):
         ]
         for obstacle in self._obstacles:
             world.add_landmark(obstacle)
-        
-    def _create_global_heading_vis(self,world):
+    
+    def _create_occupancy_grid(self, batch_dim):
 
-        if self.global_heading_objective:
-            self.heading_landmark = Landmark(f"heading", collide=False, movable=False, shape=Sphere(radius=self.location_radius), color=Color.YELLOW)
-            world.add_landmark(self.heading_landmark)
+        self.occupancy_grid = OccupancyGrid(
+            batch_size=batch_dim,
+            x_dim=self.x_semidim*2,
+            y_dim=self.y_semidim*2,
+            num_cells=self.num_grid_cells,
+            num_headings=self.n_targets,
+            mini_grid_dim=self.mini_grid_dim,
+            device=self.device)
+
+    def _initialize_heading(self, batch_dim):
+
+        self.num_headings = 4
+        self.search_indices = torch.zeros(batch_dim,device=self.device)
+        self.search_encoding = torch.zeros((batch_dim,math.ceil(math.log2(self.num_headings))),device=self.device) # Binary encoding for the observations
 
     def _initialize_rewards(self, batch_dim):
 
@@ -222,7 +218,6 @@ class MyScenario(BaseScenario):
         self.max_target_count = torch.ones(batch_dim, device=self.device) # Initialized to n_targets (ratio)
         # 2) Heading
         self.search_coordinates = torch.zeros((batch_dim,2),device=self.device) # Initialized to center
-        self.search_encoding = torch.zeros((batch_dim,2),device=self.device) # Binary encoding for the observations
         self.possible_coordinates = torch.tensor([
             [-self.x_semidim / 2, -self.y_semidim / 2],
             [-self.x_semidim / 2,  self.y_semidim / 2],
@@ -233,15 +228,9 @@ class MyScenario(BaseScenario):
         self.target_class = torch.zeros(batch_dim, dtype=torch.int, device=self.device)
         self.targets_pos = torch.zeros((batch_dim,len(self.target_groups),self.n_targets,2), device=self.device)
         #==================
-
-    def _create_occupancy_grid(self, batch_dim):
-
-        self.occupancy_grid = OccupancyGrid(batch_size=batch_dim,x_dim=self.x_semidim*2,y_dim=self.y_semidim*2,num_cells=self.num_grid_cells,device=self.device)
-        
-    def _extras(self):
-
-        if self.observe_jointpos_history:
-            self.jointpos_history = JointPosHistory(self.n_agents,self.num_envs,self.pos_history_length,self.pos_dim,self.device)
+    
+    #====================================================================================================================
+    #====================================================================================================================
 
     def observation(self, agent: Agent):
 
@@ -292,6 +281,8 @@ class MyScenario(BaseScenario):
             obs_components.append(self.search_encoding)
         if self.use_occupancy_grid_rew:
             obs_components.append(self.occupancy_grid.get_observation_normalized(pos,self.mini_grid_dim))
+        if self.observe_grid:
+            obs_components.append(self.occupancy_grid.observe_grid())
 
         # Concatenate observations along last dimension
         obs = torch.cat([comp for comp in obs_components if comp is not None], dim=-1)
@@ -303,137 +294,9 @@ class MyScenario(BaseScenario):
             agent.velocity_history.update(vel)
 
         return obs
-
-    def reset_world_at(self, env_index: int = None):
-        """Reset the world for a given environment index."""
-        if env_index is None: # Apply to all environements
-
-            self.all_time_covered_targets = torch.full(
-                (self.world.batch_dim, self.n_targets), False, device=self.world.device
-            )
-            self.agent_stopped = torch.full(
-                (self.world.batch_dim, self.n_agents), False, device=self.world.device
-            )
-
-            # Randomize search coordinates
-            if self.global_heading_objective:
-                indices = torch.randint(0, 4, (self.world.batch_dim,), device=self.device)
-                self.search_coordinates = self.possible_coordinates[indices]
-                self.search_encoding = torch.stack([(indices >> 1) & 1, indices & 1], dim=-1)
-                self.heading_landmark.set_pos(self.search_coordinates)
-
-            # Randomize target class
-            if self.target_attribute_objective:
-                self.target_class = torch.randint(0, len(self.target_groups), (self.world.batch_dim,), device=self.device)
-
-            # Initialize occupency gird
-            if self.use_occupancy_grid_rew:
-                self.occupancy_grid.reset_all()
-
-            # Do I need this?
-            # # Reset novelty rewards
-            # for agent in self.world.agents:
-            #     if self.use_count_rew:
-            #         agent.count_based_rew.reset()
-            #     if self.use_entropy_rew:
-            #         agent.entropy_based_rew.reset()
-            #     if self.observe_pos_history:
-            #         agent.position_history.reset()
-            #     if self.observe_vel_history:
-            #         agent.velocity_history.reset()
-            #     agent.oneshot_signal.zero_()
-            # if self.observe_jointpos_history:
-            #     self.jointpos_history.reset()
-
-        else:
-            
-            self.all_time_covered_targets[env_index] = False
-            self.targets_pos[env_index].zero_()
-
-            # Reset histories
-            for agent in self.world.agents:
-                if self.use_count_rew:
-                    agent.count_based_rew.reset(env_index)
-                if self.use_entropy_rew:
-                    agent.entropy_based_rew.reset(env_index)
-                if self.observe_pos_history:
-                    agent.position_history.reset(env_index)
-                if self.observe_vel_history:
-                    agent.velocity_history.reset(env_index)
-                agent.oneshot_signal[env_index] = 0.0
-            if self.observe_jointpos_history:
-                self.jointpos_history.reset(env_index)
-            
-            # Randomize max target count
-            random_tensor = torch.randint(1, self.n_targets + 1, (self.world.batch_dim,))
-            self.max_target_count[env_index] = random_tensor[env_index] / self.n_targets
-            self.num_covered_targets[env_index].zero_()
-
-            # Randomize search coordinates
-            if self.global_heading_objective:
-                indices = torch.randint(0, 4, (self.world.batch_dim,), device=self.device)
-                self.search_coordinates[env_index] = self.possible_coordinates[indices[env_index]]
-                self.search_encoding[env_index] = torch.tensor([(indices[env_index] >> 1) & 1,(indices[env_index] & 1)], device=self.device)
-                self.heading_landmark.set_pos(self.search_coordinates[env_index],env_index)
-
-            # Randomize target class
-            if self.target_attribute_objective:
-                rand = torch.randint(0, len(self.target_groups), (self.world.batch_dim,), device=self.device)
-                self.target_class[env_index] = rand[env_index]
-
-        self._spawn_entities_randomly(env_index)
-
-        
-    def _spawn_entities_randomly(self, env_index: int):
-
-        """Spawn agents, targets, and obstacles randomly while ensuring valid distances."""
-        entities = self._targets[: self.n_targets] + self.world.agents
-        if self.add_obstacles:
-            entities += self._obstacles[: self.n_obstacles]
-        if self.target_attribute_objective:
-            entities += self._secondary_targets[: self.n_targets]
-
-        ScenarioUtils.spawn_entities_randomly(
-            entities=entities,
-            world=self.world,
-            env_index=env_index,
-            min_dist_between_entities=self._min_dist_between_entities,
-            x_bounds=(-self.world.x_semidim, self.world.x_semidim),
-            y_bounds=(-self.world.y_semidim, self.world.y_semidim),
-        )
-
-        for targets in self.target_groups:
-            for target in targets[self.n_targets :]:
-                target.set_pos(self._get_outside_pos(env_index), batch_index=env_index)
-        
-        # Initialize occupency grid with new obstacle positions
-        if self.use_occupancy_grid_rew:
-                self.occupancy_grid.reset_env(env_index)
-
-    def reward(self, agent: Agent):
-        """Compute the reward for a given agent."""
-        is_first = agent == self.world.agents[0]
-        is_last = agent == self.world.agents[-1]
-
-        if is_first:
-            self._compute_agent_distance_matrix()
-            self._compute_covering_rewards()
-
-        # Initialize individual rewards
-        agent.collision_rew[:] = 0
-        agent.oneshot_rew[:] = 0
-        covering_rew = agent.covering_reward if not self.shared_reward else self.shared_covering_rew
-        covering_rew *= torch.abs(agent.oneshot_signal-1) # All postive rewards are deactivated once oneshot is on
-
-        # Compute each reward component separately
-        self._compute_collisions(agent)
-        novelty_rew = self._compute_novelty_rewards(agent)
-        ld_rew = self._compute_ld_rewards(agent)
-
-        if is_last:
-            self._handle_target_respawn()
-
-        return agent.collision_rew + covering_rew + self.time_penalty + agent.oneshot_rew + novelty_rew + ld_rew
+    
+    #====================================================================================================================
+    #====================================================================================================================
     
     def agent_reward(self, agent):
         agent_index = self.world.agents.index(agent)
@@ -496,11 +359,25 @@ class MyScenario(BaseScenario):
                 ] += self.agent_collision_penalty
 
         # Avoid collision with obstacles
+        pos = agent.state.pos
         if self.add_obstacles:
             for o in self._obstacles:
                 agent.collision_rew[
                     self.world.get_distance(o,agent) < self.min_collision_distance
                 ] += self.obstacle_collision_penalty
+
+            # No collision with borders (make sure the grid is setup to see the border)
+            mask_x = (pos[:, 0] > self.x_semidim - self.agent_radius) & (pos[:, 0] < -self.x_semidim + self.agent_radius)
+            mask_y = (pos[:, 1] > self.y_semidim - self.agent_radius) & (pos[:, 1] < -self.y_semidim + self.agent_radius)
+            agent.collision_rew[mask_x] += self.obstacle_collision_penalty
+            agent.collision_rew[mask_y] += self.obstacle_collision_penalty
+    
+    def _compute_covering_rewards(self):
+        """Compute covering rewards and update shared covering reward."""
+        self.shared_covering_rew[:] = 0
+        for agent in self.world.agents:
+            self.shared_covering_rew += self.agent_reward(agent)
+        self.shared_covering_rew[self.shared_covering_rew != 0] /= 2
 
     def _compute_novelty_rewards(self, agent):
 
@@ -524,7 +401,7 @@ class MyScenario(BaseScenario):
         if self.use_occupancy_grid_rew:
             reward += self.occupancy_grid.compute_exploration_bonus(pos)
             self.occupancy_grid.update(pos)
-
+        
         return reward
     
     def _compute_ld_rewards(self, agent):
@@ -552,13 +429,9 @@ class MyScenario(BaseScenario):
                 reward[reached_mask] += 0.1 # Reward for being in the search region
 
         return reward
-
-    def _compute_covering_rewards(self):
-        """Compute covering rewards and update shared covering reward."""
-        self.shared_covering_rew[:] = 0
-        for agent in self.world.agents:
-            self.shared_covering_rew += self.agent_reward(agent)
-        self.shared_covering_rew[self.shared_covering_rew != 0] /= 2
+    
+    #====================================================================================================================
+    #====================================================================================================================
 
     def _handle_target_respawn(self):
         """Handle target respawn and removal for covered targets."""
@@ -611,7 +484,7 @@ class MyScenario(BaseScenario):
                 # Apply movement penalty if the agent has stopped
                 movement_penalty = torch.linalg.norm(agent.state.vel[self.agent_stopped[:, agent_index]], dim=-1) * -1.0
                 agent.oneshot_rew[self.agent_stopped[:, agent_index]] = movement_penalty
-
+    
     def _get_outside_pos(self, env_index):
         """Get a position far outside the environment to hide entities."""
         return torch.empty(
@@ -622,8 +495,8 @@ class MyScenario(BaseScenario):
             ),
             device=self.world.device,
         ).uniform_(-1000 * self.world.x_semidim, -10 * self.world.x_semidim)
-
-    def info(self, agent: Agent) -> Dict[str, Tensor]:
+    
+    def info(self, agent: Agent) -> Dict[str, torch.Tensor]:
         """Return auxiliary information about the agent."""
         return {
             "covering_reward": agent.covering_reward if not self.shared_reward else self.shared_covering_rew,
@@ -635,60 +508,4 @@ class MyScenario(BaseScenario):
     def done(self):
         """Check if all targets are covered and simulation should end."""
         return self.all_time_covered_targets.all(dim=-1)
-
-    def extra_render(self, env_index: int = 0) -> "List[Geom]":
-        """Render additional visual elements."""
-        from vmas.simulator import rendering
-
-        geoms = []
-        for targets in self.target_groups:
-            for target in targets:
-                range_circle = rendering.make_circle(self._covering_range, filled=False)
-                xform = rendering.Transform()
-                xform.set_translation(*target.state.pos[env_index])
-                range_circle.add_attr(xform)
-                range_circle.set_color(*self.target_color.value)
-                geoms.append(range_circle)
-
-        # Render communication lines between agents
-        for i, agent1 in enumerate(self.world.agents):
-            for j, agent2 in enumerate(self.world.agents):
-                if j <= i:
-                    continue
-                if self.world.get_distance(agent1, agent2)[env_index] <= self._comms_range:
-                    line = rendering.Line(
-                        agent1.state.pos[env_index], agent2.state.pos[env_index], width=1
-                    )
-                    line.set_color(*Color.BLACK.value)
-                    geoms.append(line)
-        
-        # Render Occupancy Grid lines
-        grid = self.occupancy_grid
-        for i in range(grid.grid_width + 1):  # Vertical lines
-            x = i * grid.cell_size_x - grid.x_dim / 2
-            line = rendering.Line((x, -grid.y_dim / 2), (x, grid.y_dim / 2), width=1)
-            line.set_color(*Color.GRAY.value)
-            geoms.append(line)
-
-        for j in range(grid.grid_height + 1):  # Horizontal lines
-            y = j * grid.cell_size_y - grid.y_dim / 2
-            line = rendering.Line((-grid.x_dim / 2, y), (grid.x_dim / 2, y), width=1)
-            line.set_color(*Color.GRAY.value)
-            geoms.append(line)
-
-        # Render grid cells with color based on visit normalization
-        if self.plot_grid:
-            for i in range(grid.grid_width):
-                for j in range(grid.grid_height):
-                    x = i * grid.cell_size_x - grid.x_dim / 2
-                    y = j * grid.cell_size_y - grid.y_dim / 2
-                    count = grid.grid_visits[env_index, j, i]
-                    intensity = 1/(1+torch.exp(5 - count)).item() * 0.5
-                    color = (1.0 - intensity, 1.0 - intensity, 1.0)  # Blueish gradient based on visits
-                    rect = rendering.FilledPolygon([(x, y), (x + grid.cell_size_x, y), 
-                                                    (x + grid.cell_size_x, y + grid.cell_size_y), (x, y + grid.cell_size_y)])
-                    rect.set_color(*color)
-                    geoms.append(rect)
-
-        return geoms
     

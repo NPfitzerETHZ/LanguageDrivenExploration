@@ -19,8 +19,9 @@ from ray.tune.integration.wandb import WandbLoggerCallback
 
 #from vmas import make_env
 from vmas.simulator.environment import Wrapper
-#from exploration import MyScenario
-from corridors import MyScenario
+from exploration import MyScenario
+from corridors import MyCorridorScenario
+from grid_maps import MyGridMapScenario
 
 #scenario_name = "exploration"
 scenario_name = "corridors"
@@ -31,7 +32,7 @@ n_agents = 2
 
 # Common variables
 continuous_actions = True
-max_steps = 130
+max_steps = 200
 num_vectorized_envs = 96
 num_workers = 5
 vmas_device = "cpu"  # or cuda
@@ -109,7 +110,7 @@ def make_env(
     if isinstance(scenario, str):
 
         if scenario == scenario_name: # Modified this
-            scenario = MyScenario() 
+            scenario = MyGridMapScenario() 
         else:                         # End here
             if not scenario.endswith(".py"):
                 scenario += ".py"

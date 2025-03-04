@@ -139,3 +139,11 @@ class JointPosHistory:
         """Resets the joint position history of a given index to zero"""
         self.history[env_idx].zero_()
 
+# class CellPosHistory:
+
+#     def __init__(self, batch_size: int, history_length: int, pos_dim: int, device='cpu'):
+#         # Idea:
+#         # Have a history of previously visited cells (relative to current)
+#         # Have a history of cell quality (number of neighbouring free spaces vs. full)
+#         # Maybe have a grid of cell quality? Updated at each step? is it too much compute? It would be kind of a value iteration.
+#         # Triggering reward?

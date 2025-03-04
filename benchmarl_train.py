@@ -4,7 +4,7 @@ from typing import Callable, Optional
 from benchmarl.environments import VmasTask
 from benchmarl.utils import DEVICE_TYPING
 from torchrl.envs import EnvBase, VmasEnv  
-from exploration import MyScenario
+from grid_maps import MyGridMapScenario
 
 from benchmarl.environments import VmasTask, Smacv2Task, PettingZooTask, MeltingPotTask
 from benchmarl.experiment import ExperimentConfig, Experiment
@@ -21,7 +21,7 @@ def get_env_fun(
 ) -> Callable[[], EnvBase]:
     config = copy.deepcopy(self.config)
     if self is VmasTask.NAVIGATION: # This is the only modification we make ....
-        scenario = MyScenario() # .... ends here
+        scenario = MyGridMapScenario() # .... ends here
     else:
         scenario = self.name.lower()
     return lambda: VmasEnv(
@@ -49,7 +49,7 @@ experiment_config.train_device = train_device
 experiment_config.max_n_frames = 10_000_000 # Number of frames before training ends
 experiment_config.gamma = 0.99
 experiment_config.on_policy_collected_frames_per_batch = 60_000 # Number of frames collected each iteration
-experiment_config.on_policy_n_envs_per_worker = 200 # Number of vmas vectorized enviornemnts (each will collect 100 steps, see max_steps in task_config -> 600 * 100 = 60_000 the number above)
+experiment_config.on_policy_n_envs_per_worker = 600 # Number of vmas vectorized enviornemnts (each will collect 100 steps, see max_steps in task_config -> 600 * 100 = 60_000 the number above)
 experiment_config.on_policy_n_minibatch_iters = 45
 experiment_config.on_policy_minibatch_size = 4096
 experiment_config.evaluation = True
@@ -64,7 +64,7 @@ task = VmasTask.NAVIGATION.get_from_yaml()
 
 # We override the NAVIGATION config with ours
 task.config = {
-        "max_steps": 200,
+        "max_steps": 400,
         "n_agents_holonomic": 4,
         "lidar_range": 0.35,
         "comms_rendering_range": 0,
