@@ -24,13 +24,14 @@ class MyScenario(BaseScenario):
         self.x_semidim = kwargs.pop("x_semidim", 1.0)
         self.y_semidim = kwargs.pop("y_semidim", 1.0)
         self._min_dist_between_entities = kwargs.pop("min_dist_between_entities", 0.2)
-        self._lidar_range = kwargs.pop("lidar_range", 0.35)
+        self._lidar_range = kwargs.pop("lidar_range", 0.15)
         self._covering_range = kwargs.pop("covering_range", 0.15)
 
         self.use_lidar = kwargs.pop("use_lidar", False)
+        self.use_target_lidar = kwargs.pop("use_target_lidar", False)
         self.use_agent_lidar = kwargs.pop("use_agent_lidar", False)
         self.use_obstacle_lidar = kwargs.pop("use_obstacle_lidar", False)
-        self.n_lidar_rays_entities = kwargs.pop("n_lidar_rays_entities", 15)
+        self.n_lidar_rays_entities = kwargs.pop("n_lidar_rays_entities", 8)
         self.n_lidar_rays_agents = kwargs.pop("n_lidar_rays_agents", 12)
 
         self._agents_per_target = kwargs.pop("agents_per_target", 1)
@@ -125,9 +126,10 @@ class MyScenario(BaseScenario):
     
     def _create_agent_sensors(self, world):
         """Create and return sensors for agents."""
-        sensors = [
-            Lidar(world, n_rays=self.n_lidar_rays_entities, max_range=self._lidar_range, entity_filter=lambda e: e.name.startswith("target"), render_color=Color.GREEN)
-        ]
+        sensors = []
+        
+        if self.use_target_lidar:
+            sensors.append(Lidar(world, n_rays=self.n_lidar_rays_entities, max_range=self._lidar_range, entity_filter=lambda e: e.name.startswith("target"), render_color=Color.GREEN))
         if self.use_obstacle_lidar:
             sensors.append(Lidar(world, n_rays=self.n_lidar_rays_entities, max_range=self._lidar_range, entity_filter=lambda e: e.name.startswith("obstacle"), render_color=Color.BLUE))
         if self.use_agent_lidar:
@@ -178,8 +180,7 @@ class MyScenario(BaseScenario):
     
     def _create_obstacles(self, world):
         """Create obstacle landmarks and add them to the world."""
-        if not self.add_obstacles:
-            return
+        
         self._obstacles = [
             Landmark(f"obstacle_{i}", collide=True, movable=False, shape=Box(random.uniform(0.1, 0.25), random.uniform(0.1, 0.25)), color=Color.BLUE)
             for i in range(self.n_obstacles)
@@ -212,6 +213,7 @@ class MyScenario(BaseScenario):
         self.agent_stopped = torch.zeros(batch_dim, self.n_agents, dtype=torch.bool, device=self.device)
         self.jointentropy_rew = JointEntropyBasedReward(radius=self._lidar_range, n_agents=self.n_agents, max_buffer_size=30)
         self.num_covered_targets = torch.zeros(batch_dim, device=self.device)
+        self.covering_rew_val = torch.zeros(batch_dim, device=self.device)
         #===================
         # Language Driven Goals
         # 1) Count
@@ -367,8 +369,8 @@ class MyScenario(BaseScenario):
                 ] += self.obstacle_collision_penalty
 
             # No collision with borders (make sure the grid is setup to see the border)
-            mask_x = (pos[:, 0] > self.x_semidim - self.agent_radius) & (pos[:, 0] < -self.x_semidim + self.agent_radius)
-            mask_y = (pos[:, 1] > self.y_semidim - self.agent_radius) & (pos[:, 1] < -self.y_semidim + self.agent_radius)
+            mask_x = (pos[:, 0] > self.x_semidim - self.agent_radius) | (pos[:, 0] < -self.x_semidim + self.agent_radius)
+            mask_y = (pos[:, 1] > self.y_semidim - self.agent_radius) | (pos[:, 1] < -self.y_semidim + self.agent_radius)
             agent.collision_rew[mask_x] += self.obstacle_collision_penalty
             agent.collision_rew[mask_y] += self.obstacle_collision_penalty
     
@@ -435,41 +437,23 @@ class MyScenario(BaseScenario):
 
     def _handle_target_respawn(self):
         """Handle target respawn and removal for covered targets."""
-        occupied_positions_agents = torch.cat([self.agents_pos], dim=1)
 
         for j, targets in enumerate(self.target_groups):
             indices = torch.where(self.target_class == j)[0]
             for i, target in enumerate(targets):
-                occupied_positions_targets = torch.cat([o.state.pos.unsqueeze(1) for o in targets if o is not target], dim=1)
-                occupied_positions = torch.cat((occupied_positions_agents[indices],occupied_positions_targets[indices]), dim=1)
+                # Keep track of all-time covered targets
+                self.all_time_covered_targets[indices] += self.covered_targets[indices,self.target_class[indices]]
 
-                # Respawn targets that have been covered
-                if self.targets_respawn:
-                    pos = ScenarioUtils.find_random_pos_for_entity(
-                        occupied_positions,
-                        env_index=None,
-                        world=self.world,
-                        min_dist_between_entities=self._min_dist_between_entities,
-                        x_bounds=(-self.world.x_semidim, self.world.x_semidim),
-                        y_bounds=(-self.world.y_semidim, self.world.y_semidim),
-                    )
+                # # If all targets have been covered, apply final reward
+                # if self.shared_final_reward and self.all_time_covered_targets.all():
+                #     self.shared_covering_rew += 5  # Final reward
 
-                    target.state.pos[self.covered_targets[indices, i]] = pos[self.covered_targets[indices, i]].squeeze(1)
-
-                else:
-                    # Keep track of all-time covered targets
-                    self.all_time_covered_targets[indices] += self.covered_targets[indices,self.target_class[indices]]
-
-                    # # If all targets have been covered, apply final reward
-                    # if self.shared_final_reward and self.all_time_covered_targets.all():
-                    #     self.shared_covering_rew += 5  # Final reward
-
-                    # Move covered targets outside the environment
-                    indices_selected = torch.where(self.covered_targets[indices,self.target_class[indices],i])[0]
-                    indices_selected = indices[indices_selected]
-                    target.state.pos[indices_selected,:] = self._get_outside_pos(None)[
-                        indices_selected
-                    ]
+                # Move covered targets outside the environment
+                indices_selected = torch.where(self.covered_targets[indices,self.target_class[indices],i])[0]
+                indices_selected = indices[indices_selected]
+                target.state.pos[indices_selected,:] = self._get_outside_pos(None)[
+                    indices_selected
+                ]
 
     def _handle_agents_staying_at_target(self):
         # Handle agents staying at the target

@@ -60,6 +60,39 @@ class SpatialDiffusionOccupancyGrid(OccupancyGrid):  # Updated class name
                 break
 
         return deltas  # Return convergence data for debugging
+    
+    # def update(self, agent_positions: torch.Tensor, mini_grid_dim: int = 3):
+    #     """
+    #     Update the grid and visit count based on the agents' current positions.
+
+    #     Args:
+    #         agent_positions (torch.Tensor): The current positions of agents.
+    #         mini_grid_dim (int, optional): The dimension of the mini-grid. Defaults to 3.
+    #     """
+
+    #     # Convert agent positions to grid coordinates
+    #     grid_x, grid_y = self.world_to_grid(agent_positions, padding=True)
+        
+    #     # Batch indices for multi-agent updates
+    #     batch_indices = torch.arange(agent_positions.shape[0], device=agent_positions.device)  
+
+    #     # Get mini-grid ranges for updating
+    #     x_range, y_range = self.sample_mini_grid(agent_positions, mini_grid_dim)
+
+    #     # Prepare index tensors
+    #     batch_idx_expanded = batch_indices.unsqueeze(-1).unsqueeze(-1)
+    #     y_expanded = y_range.unsqueeze(-1)
+    #     x_expanded = x_range.unsqueeze(-2)
+
+    #     # Update visit count
+    #     self.grid_visits[batch_idx_expanded, y_expanded, x_expanded] += self.visit_mask.unsqueeze(0)
+
+    #     # Apply sigmoid transformation
+    #     visits_sub = self.grid_visits[batch_idx_expanded, y_expanded, x_expanded]
+    #     self.grid_visits_sigmoid[batch_idx_expanded, y_expanded, x_expanded] = 1 / (1 + torch.exp(self.visit_threshold - visits_sub))
+
+    #     # Mark visited positions
+        self.grid_visited[batch_indices, grid_y, grid_x] = VISITED
 
     def get_value_grid_observation(self, pos, mini_grid_dim):
 
@@ -138,3 +171,4 @@ class SpatialDiffusionOccupancyGrid(OccupancyGrid):  # Updated class name
         self.value_grid[env_index].zero_()
         self.value_grid[env_index,self.border_mask] = OBSTACLE
         return super().reset_env(env_index)
+    

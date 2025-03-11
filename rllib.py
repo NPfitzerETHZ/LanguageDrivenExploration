@@ -22,6 +22,7 @@ from vmas.simulator.environment import Wrapper
 from exploration import MyScenario
 from corridors import MyCorridorScenario
 from grid_maps import MyGridMapScenario
+from llm_heading_scenario import MyLanguageScenario
 
 #scenario_name = "exploration"
 scenario_name = "corridors"
@@ -110,7 +111,7 @@ def make_env(
     if isinstance(scenario, str):
 
         if scenario == scenario_name: # Modified this
-            scenario = MyGridMapScenario() 
+            scenario = MyLanguageScenario() 
         else:                         # End here
             if not scenario.endswith(".py"):
                 scenario += ".py"

@@ -13,10 +13,10 @@ if typing.TYPE_CHECKING:
     from vmas.simulator.rendering import Geom
 
 from myscenario import MyScenario
-from spatial_diffusion import SpatialDiffusionOccupancyGrid
 from dead_end import DeadEndOccupancyGrid
+from heading import HeadingOccupancyGrid
 
-class MyGridMapScenario(MyScenario):
+class MyLanguageScenario(MyScenario):
 
     def make_world(self, batch_dim: int, device: torch.device, **kwargs):
         """Initialize the world and entities."""
@@ -33,6 +33,8 @@ class MyGridMapScenario(MyScenario):
     
     def _load_scenario_config(self,kwargs):
 
+        self.n_targets = kwargs.pop("n_targets", 1)
+
         self.use_agent_lidar = kwargs.pop("use_agent_lidar", False)
         self.use_obstacle_lidar = kwargs.pop("use_obstacle_lidar", False)
         self.add_obstacles = kwargs.pop("add_obstacles", True)  # This isn't implemented yet
@@ -42,7 +44,7 @@ class MyGridMapScenario(MyScenario):
         self.use_entropy_rew = kwargs.pop("use_entropy_rew", False)
         self.use_jointentropy_rew = kwargs.pop("use_jointentropy_rew", False)
         self.use_occupancy_grid_rew = kwargs.pop("use_occupencygrid_rew", True)
-        self.use_expo_search_rew = kwargs.pop("use_expo_search_rew", True)
+        self.use_expo_search_rew = kwargs.pop("use_expo_search_rew", False)
 
         self.agent_collision_penalty = kwargs.pop("agent_collision_penalty", -0.0)
         self.obstacle_collision_penalty = kwargs.pop("obstacle_collision_penalty", -0.75)
@@ -54,17 +56,13 @@ class MyGridMapScenario(MyScenario):
 
         #===================
         # Language Driven Goals
-        # 1) Count
-        self.max_target_objective = kwargs.pop("max_target_objective", False) # Enter as fraction of total number of targets
-        # 2) Heading
-        self.global_heading_objective = kwargs.pop("global_heading_objective", False)
-        # 3) Attribute
+        self.global_heading_objective = kwargs.pop("global_heading_objective", True)
         self.target_attribute_objective = kwargs.pop("target_attribute_objective", False)
         #===================
 
         # Grid
-        self.n_obstacles = kwargs.pop("n_obstacle", 8)
-        self.observe_grid = kwargs.pop("observe_grid",True)
+        self.n_obstacles = kwargs.pop("n_obstacle", 4)
+        self.observe_grid = kwargs.pop("observe_grid",False)
         self.num_grid_cells = 64 # Must be n^2 with n = width 
         self.mini_grid_dim = 3
 
@@ -78,7 +76,7 @@ class MyGridMapScenario(MyScenario):
 
     def _create_occupancy_grid(self, batch_dim):
 
-        self.occupancy_grid = DeadEndOccupancyGrid(
+        self.occupancy_grid = HeadingOccupancyGrid(
             batch_size=batch_dim,
             x_dim=self.x_semidim*2,
             y_dim=self.y_semidim*2,
@@ -89,11 +87,13 @@ class MyGridMapScenario(MyScenario):
         
         self._covering_range = self.occupancy_grid.cell_radius
 
+    
     def _create_obstacles(self, world):
 
         """Create obstacle landmarks and add them to the world."""
-        self._obstacles = 10
-
+        if not self.add_obstacles:
+            return
+        
         self._obstacles = [
             Landmark(f"obstacle_{i}", collide=True, movable=False, shape=Box(self.occupancy_grid.cell_size_x,self.occupancy_grid.cell_size_y), color=Color.RED)
             for i in range(self.n_obstacles)
@@ -188,11 +188,9 @@ class MyGridMapScenario(MyScenario):
 
         """Spawn agents, targets, and obstacles randomly while ensuring valid distances."""
 
-        # First spawn obstacles
         n_targets = self.n_targets + (len(self._secondary_targets) if self.target_attribute_objective else 0)
-        obs_poses, agent_poses, target_poses = self.occupancy_grid.spawn_map(env_index,self.n_obstacles,self.n_agents,n_targets,self.target_class)
-        #self.occupancy_grid.diffusion_update(env_ids=env_index)
-        self.occupancy_grid.compute_dead_end_grid(env_index)
+        print("Numer of targets:", n_targets)
+        obs_poses, agent_poses, _ = self.occupancy_grid.spawn_map(env_index,self.n_obstacles,self.n_agents,n_targets,self.target_class)
 
         for i in range(obs_poses.shape[0]):
             for j, obs in enumerate(self._obstacles):
@@ -201,24 +199,13 @@ class MyGridMapScenario(MyScenario):
         for i in range(agent_poses.shape[0]):
             for j, agent in enumerate(self.world.agents):
                 agent.set_pos(agent_poses[i,j],batch_index=env_index)
-        
-        for i in range(target_poses.shape[0]):
-            for j, target in enumerate(self._targets):
-                target.set_pos(target_poses[i,j],batch_index=env_index)
-            if self.target_attribute_objective:
-                for j,target in enumerate(self._secondary_targets):
-                    target.set_pos(target_poses[i,self.n_targets+j],batch_index=env_index)
-
-        target_poses = []
-        for targets in self.target_groups:
-            for target in targets[:self.n_targets]:
-                target_poses.append(target.state.pos[env_index])
-            for target in targets[self.n_targets :]:
-                target.set_pos(self._get_outside_pos(env_index), batch_index=env_index)
 
         # Initialize Headings
-        if self.global_heading_objective:
-            self.occupancy_grid._initalize_headings(target_poses,self.mini_grid_dim,env_index)
+        target_poses = self.occupancy_grid._initalize_heading(env_index)
+        for target in self._targets[:self.n_targets]:
+            target.set_pos(target_poses,batch_index=env_index)
+        for target in self._targets[self.n_targets :]:
+            target.set_pos(self._get_outside_pos(env_index), batch_index=env_index)
         
     def reward(self, agent: Agent):
         """Compute the reward for a given agent."""
@@ -308,8 +295,8 @@ class MyGridMapScenario(MyScenario):
             #obs_components.append(self.occupancy_grid.get_grid_map_observation(pos,self.mini_grid_dim))
             #obs_components.append(self.occupancy_grid.get_grid_visits_obstacle_observation(pos,self.mini_grid_dim))
             #obs_components.append(self.occupancy_grid.get_deadend_grid_observation(pos,self.mini_grid_dim))
-            obs_components.append(self.occupancy_grid.get_value_grid_observation(pos,self.mini_grid_dim))
-            #obs_components.append(self.occupancy_grid.get_grid_visits_observation(pos,self.mini_grid_dim))
+            #obs_components.append(self.occupancy_grid.get_value_grid_observation(pos,self.mini_grid_dim))
+            obs_components.append(self.occupancy_grid.get_grid_visits_observation(pos,self.mini_grid_dim))
             #obs_components.append(self.occupancy_grid.get_grid_obstacle_observation(pos,self.mini_grid_dim))
             #obs_components.append(self.occupancy_grid.get_flat_grid_pos_from_pos(pos).unsqueeze(1))
         if self.use_expo_search_rew:
@@ -368,22 +355,6 @@ class MyGridMapScenario(MyScenario):
                 line = rendering.Line((-grid.x_dim / 2, y), (grid.x_dim / 2, y), width=1)
                 line.set_color(*Color.BLUE.value)
                 geoms.append(line)
-
-            value_grid = grid.value_grid[env_index,1:-1,1:-1]
-            for i in range(value_grid.shape[1]):
-                for j in range(value_grid.shape[0]):
-                    x = i * grid.cell_size_x - grid.x_dim / 2
-                    y = j * grid.cell_size_y - grid.y_dim / 2
-
-                    # Value
-                    visit_lvl = value_grid[j, i]
-                    if visit_lvl > 0.05 :
-                        intensity = visit_lvl.item() * 0.75
-                        color = (1.0 - intensity, 1.0 - intensity, 1.0)  # Blueish gradient based on visits
-                        rect = rendering.FilledPolygon([(x, y), (x + grid.cell_size_x, y), 
-                                                        (x + grid.cell_size_x, y + grid.cell_size_y), (x, y + grid.cell_size_y)])
-                        rect.set_color(*color)
-                        geoms.append(rect)
 
             # Render grid cells with color based on visit normalization
             for i in range(grid.grid_width):
