@@ -33,24 +33,27 @@ class MyGridMapScenario(MyScenario):
     
     def _load_scenario_config(self,kwargs):
 
+        self.use_gnn = kwargs.pop("use_gnn", False)
+        self._comms_range = kwargs.pop("comms_radius", 0.001)
+
         self.use_agent_lidar = kwargs.pop("use_agent_lidar", False)
-        self.use_obstacle_lidar = kwargs.pop("use_obstacle_lidar", False)
+        self.use_obstacle_lidar = kwargs.pop("use_obstacle_lidar", True)
         self.add_obstacles = kwargs.pop("add_obstacles", True)  # This isn't implemented yet
 
         # Novelty rewards
         self.use_count_rew = kwargs.pop("use_count_rew", False)
         self.use_entropy_rew = kwargs.pop("use_entropy_rew", False)
         self.use_jointentropy_rew = kwargs.pop("use_jointentropy_rew", False)
-        self.use_occupancy_grid_rew = kwargs.pop("use_occupencygrid_rew", True)
+        self.use_occupancy_grid_rew = kwargs.pop("use_occupency_grid_rew", True)
         self.use_expo_search_rew = kwargs.pop("use_expo_search_rew", True)
 
-        self.agent_collision_penalty = kwargs.pop("agent_collision_penalty", -0.0)
+        self.agent_collision_penalty = kwargs.pop("agent_collision_penalty", 0.00)
         self.obstacle_collision_penalty = kwargs.pop("obstacle_collision_penalty", -0.75)
         self.covering_rew_coeff = kwargs.pop("covering_rew_coeff", 8.0) # Large reward for finding a target
         self.false_covering_penalty_coeff = kwargs.pop("false_covering_penalty_coeff", -0.25) # Penalty for covering wrong target
         self.time_penalty = kwargs.pop("time_penalty", -0.01)
         self.terminal_rew_coeff = kwargs.pop("terminal_rew_coeff", 0.0)
-        self.exponential_search_rew = kwargs.pop("exponential_search_rew_coeff", 0.1)
+        self.exponential_search_rew = kwargs.pop("exponential_search_rew_coeff", 0.75)
 
         #===================
         # Language Driven Goals
@@ -143,7 +146,8 @@ class MyGridMapScenario(MyScenario):
                 self.occupancy_grid.reset_all()
             
             if self.use_expo_search_rew:
-                self.covering_rew_val.zero_()
+                self.covering_rew_val.fill_(1)
+                self.covering_rew_val *= self.covering_rew_coeff
 
         else:
 
@@ -155,7 +159,7 @@ class MyGridMapScenario(MyScenario):
                 self.occupancy_grid.reset_env(env_index)
             
             if self.use_expo_search_rew:
-                self.covering_rew_val[env_index] = 0.0
+                self.covering_rew_val[env_index] = self.covering_rew_coeff
 
             # Reset histories
             for agent in self.world.agents:
@@ -290,12 +294,14 @@ class MyGridMapScenario(MyScenario):
         vel_hist = agent.velocity_history.get_flattened() if self.observe_vel_history else None
 
         # Collect all observation components
-        obs_components = [pos, vel]
+        obs_components = []
         obs_components.append(self.occupancy_grid.get_grid_target_observation(pos,self.mini_grid_dim))
         if self.observe_pos_history:
             obs_components.append(pos_hist[: pos.shape[0], :])
+            agent.position_history.update(pos)
         if self.observe_vel_history:
             obs_components.append(vel_hist[: vel.shape[0], :])
+            agent.velocity_history.update(vel)
         if self.target_attribute_objective:
             obs_components.append(self.target_class.unsqueeze(1))
         if self.max_target_objective:
@@ -316,17 +322,42 @@ class MyGridMapScenario(MyScenario):
             obs_components.append(self.num_covered_targets.unsqueeze(1))
         if self.use_lidar:
             obs_components.append(lidar_measures)
+        if not self.use_gnn:
+            obs_components.append(pos)
+            obs_components.append(vel)
 
         # Concatenate observations along last dimension
         obs = torch.cat([comp for comp in obs_components if comp is not None], dim=-1)
 
-        # Update history buffers if enabled
-        if self.observe_pos_history:
-            agent.position_history.update(pos)
-        if self.observe_vel_history:
-            agent.velocity_history.update(vel)
+        if self.use_gnn:
+            return {"obs": obs, "pos": pos, "vel": vel}
+        else:
+            return obs
+        
+    def agent_reward(self, agent):
+        agent_index = self.world.agents.index(agent)
 
-        return obs
+        agent.covering_reward[:] = 0
+        targets_covered_by_agent = (
+            self.agents_targets_dists[:, :, agent_index, :] < self._covering_range  # (batch_size, target_groups, n_targets)
+        )
+        num_covered_targets_covered_by_agent = (
+            targets_covered_by_agent * self.covered_targets
+        ).sum(dim=-1)  # (batch_size, target_groups)
+        
+        # Create a mask based on self.target_class
+        reward_mask = torch.arange(self.covered_targets.shape[1], device=self.target_class.device).unsqueeze(0)  # (1, target_groups)
+        reward_mask = (reward_mask == self.target_class.unsqueeze(1))  # (batch_size, target_groups)
+
+        # Apply reward for the selected group and penalty for others
+        group_rewards = (
+            num_covered_targets_covered_by_agent * self.covering_rew_val.unsqueeze(1) * reward_mask
+            + num_covered_targets_covered_by_agent * self.false_covering_penalty_coeff * (~reward_mask)
+        )  # (batch_size, target_groups)
+
+        # Aggregate over target_groups to get (batch_size,)
+        agent.covering_reward += group_rewards.sum(dim=-1)
+        return agent.covering_reward
     
     def extra_render(self, env_index: int = 0) -> "List[Geom]":
         """Render additional visual elements."""
@@ -341,18 +372,6 @@ class MyGridMapScenario(MyScenario):
                 range_circle.add_attr(xform)
                 range_circle.set_color(*self.target_color.value)
                 geoms.append(range_circle)
-
-        # Render communication lines between agents
-        for i, agent1 in enumerate(self.world.agents):
-            for j, agent2 in enumerate(self.world.agents):
-                if j <= i:
-                    continue
-                if self.world.get_distance(agent1, agent2)[env_index] <= self._comms_range:
-                    line = rendering.Line(
-                        agent1.state.pos[env_index], agent2.state.pos[env_index], width=1
-                    )
-                    line.set_color(*Color.BLACK.value)
-                    geoms.append(line)
         
         # Render Occupancy Grid lines
         if self.plot_grid:
@@ -399,16 +418,18 @@ class MyGridMapScenario(MyScenario):
                                                         (x + grid.cell_size_x, y + grid.cell_size_y), (x, y + grid.cell_size_y)])
                         rect.set_color(*color)
                         geoms.append(rect)
-
-            #         # Visits
-            #         visit_lvl = grid.grid_visits_sigmoid[env_index, j, i]
-            #         if visit_lvl > 0.05 :
-            #             intensity = visit_lvl.item() * 0.5
-            #             color = (1.0 - intensity, 1.0 - intensity, 1.0)  # Blueish gradient based on visits
-            #             rect = rendering.FilledPolygon([(x, y), (x + grid.cell_size_x, y), 
-            #                                             (x + grid.cell_size_x, y + grid.cell_size_y), (x, y + grid.cell_size_y)])
-            #             rect.set_color(*color)
-            #             geoms.append(rect)
-
+            
+            # Render communication lines between agents
+            if self.use_gnn:
+                for i, agent1 in enumerate(self.world.agents):
+                    for j, agent2 in enumerate(self.world.agents):
+                        if j <= i:
+                            continue
+                        if self.world.get_distance(agent1, agent2)[env_index] <= self._comms_range:
+                            line = rendering.Line(
+                                agent1.state.pos[env_index], agent2.state.pos[env_index], width=3
+                            )
+                            line.set_color(*Color.BLACK.value)
+                            geoms.append(line)
 
         return geoms

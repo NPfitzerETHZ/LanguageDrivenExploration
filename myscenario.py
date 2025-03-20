@@ -17,7 +17,7 @@ class MyScenario(BaseScenario):
     
     def _load_config(self,kwargs):
 
-        self.num_envs = kwargs.pop("num_envs", 96)
+        #self.num_envs = kwargs.pop("num_envs", 96) disregard for BenchMarl
         self.n_agents = kwargs.pop("n_agents", 2)
         self.n_targets = kwargs.pop("n_targets", 4)
         self.n_obstacles = kwargs.pop("n_obstacle",5)
@@ -27,7 +27,7 @@ class MyScenario(BaseScenario):
         self._lidar_range = kwargs.pop("lidar_range", 0.15)
         self._covering_range = kwargs.pop("covering_range", 0.15)
 
-        self.use_lidar = kwargs.pop("use_lidar", False)
+        self.use_lidar = kwargs.pop("use_lidar", True)
         self.use_target_lidar = kwargs.pop("use_target_lidar", False)
         self.use_agent_lidar = kwargs.pop("use_agent_lidar", False)
         self.use_obstacle_lidar = kwargs.pop("use_obstacle_lidar", False)
@@ -58,7 +58,6 @@ class MyScenario(BaseScenario):
         self.time_penalty = kwargs.pop("time_penalty", 0)
         ScenarioUtils.check_kwargs_consumed(kwargs)
 
-        self._comms_range = self._lidar_range*0.001
         self.min_collision_distance = 0.005
         self.agent_radius = 0.05
         self.target_radius = self.agent_radius
@@ -119,9 +118,10 @@ class MyScenario(BaseScenario):
                 collide=True,
                 shape=Sphere(radius=0.05),
                 sensors=(self._create_agent_sensors(world) if self.use_lidar else []),
+                color=Color.GREEN
             )
             self._initialize_agent_rewards(agent, batch_dim)
-            self._create_agent_state_histories(agent)
+            self._create_agent_state_histories(agent, batch_dim)
             world.add_agent(agent)
     
     def _create_agent_sensors(self, world):
@@ -151,11 +151,11 @@ class MyScenario(BaseScenario):
         if self.use_count_rew:
             agent.count_based_rew = CountBasedReward(k=5)
     
-    def _create_agent_state_histories(self, agent):
+    def _create_agent_state_histories(self, agent, batch_dim):
         if self.observe_pos_history:
-            agent.position_history = PositionHistory(self.num_envs,self.pos_history_length, self.pos_dim, self.device)
+            agent.position_history = PositionHistory(batch_dim,self.pos_history_length, self.pos_dim, self.device)
         if self.observe_vel_history:
-            agent.velocity_history = VelocityHistory(self.num_envs,self.vel_history_length, self.vel_dim, self.device)
+            agent.velocity_history = VelocityHistory(batch_dim,self.vel_history_length, self.vel_dim, self.device)
 
     def _create_targets(self, world):
         """Create target landmarks and add them to the world."""
@@ -213,7 +213,7 @@ class MyScenario(BaseScenario):
         self.agent_stopped = torch.zeros(batch_dim, self.n_agents, dtype=torch.bool, device=self.device)
         self.jointentropy_rew = JointEntropyBasedReward(radius=self._lidar_range, n_agents=self.n_agents, max_buffer_size=30)
         self.num_covered_targets = torch.zeros(batch_dim, device=self.device)
-        self.covering_rew_val = torch.zeros(batch_dim, device=self.device)
+        self.covering_rew_val = torch.ones(batch_dim, device=self.device) * (self.covering_rew_coeff)
         #===================
         # Language Driven Goals
         # 1) Count

@@ -15,7 +15,7 @@ from ray.rllib.algorithms.callbacks import DefaultCallbacks, MultiCallbacks
 from ray.rllib.evaluation import Episode, MultiAgentEpisode
 from ray.rllib.utils.typing import PolicyID
 from ray.tune import register_env
-from ray.tune.integration.wandb import WandbLoggerCallback
+from ray.air.callbacks.wandb import WandbLoggerCallback
 
 #from vmas import make_env
 from vmas.simulator.environment import Wrapper
@@ -23,13 +23,14 @@ from exploration import MyScenario
 from corridors import MyCorridorScenario
 from grid_maps import MyGridMapScenario
 from llm_heading_scenario import MyLanguageScenario
+#from llm_heading_scenario import MyLanguageScenario
 
 #scenario_name = "exploration"
-scenario_name = "corridors"
+scenario_name = "exp"
 
 # Scenario specific variables.
 # When modifying this also modify env_config and env_creator
-n_agents = 2
+n_agents = 6
 
 # Common variables
 continuous_actions = True

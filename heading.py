@@ -2,10 +2,31 @@ import random
 import torch
 import numpy as np
 from sentence_transformers import SentenceTransformer
+from occupancy_grid import OccupancyGrid, TARGET, OBSTACLE
+import torch.nn as nn
 
-from occupancy_grid import OccupancyGrid
+llm = SentenceTransformer('thenlper/gte-large')
+model_path = "llm0_decoder_model.pth"
 
-model = SentenceTransformer('thenlper/gte-base')
+LARGE = 1e10
+
+
+class Decoder(nn.Module):
+    def __init__(self, emb_size):
+        super(Decoder, self).__init__()
+        hidden_size = 256
+        self.l0 = nn.Linear(emb_size, hidden_size)
+        self.l1 = nn.Linear(hidden_size, hidden_size)
+        self.l2 = nn.Linear(hidden_size, hidden_size)
+        self.l3 = nn.Linear(hidden_size, 2)
+        self.relu = nn.ReLU()
+
+    def forward(self, embed):
+        x = self.relu(self.l0(embed))
+        x = self.relu(self.l1(x))
+        x = self.relu(self.l2(x))
+        return self.l3(x)
+
 
 # Define word categories
 target_terms = [
@@ -88,129 +109,152 @@ size_map = {
     "small": 0.33
 }
 
-MINI_GRID_DIM = 3
+MINI_GRID_RADIUS = 1
+EMBEDDING_SIZE = 1024
 
 class HeadingOccupancyGrid(OccupancyGrid):
-    def __init__(self, x_dim, y_dim, num_cells, batch_size, num_targets, mini_grid_dim=3, device='cpu'):
-        super().__init__(x_dim, y_dim, num_cells, batch_size, num_targets, mini_grid_dim, device)
+    def __init__(self, x_dim, y_dim, num_cells, batch_size, num_targets, heading_mini_grid_radius=1, device='cpu'):
+        super().__init__(x_dim, y_dim, num_cells, batch_size, num_targets, heading_mini_grid_radius, device)
 
-        # Handle strings with lists, not tensors
-        self.headings_pos_string = [""] * batch_size
-        self.heading_size_string = [""] * batch_size
-        self.heading_keywords = [["", ""]] * batch_size
-
-        # Use proper tensor initialization for numerical values
-        self.heading_pos_grid = torch.zeros((batch_size, 2), dtype=torch.int, device=self.device)
-        self.headings_pos_vec = torch.zeros((batch_size, 2), dtype=torch.float, device=self.device)
-
-        # Example embedding size (define EMBEDDING_SIZE in your context)
-        EMBEDDING_SIZE = 768
-        self.heading_embedding = torch.zeros((batch_size, EMBEDDING_SIZE), device=self.device)
-
-    def update_sentence_from_vector(self, env_index):
-
-        if env_index is None:
-            env_index = torch.arange(self.batch_size,dtype=torch.int, device=self.device)
-        else:
-            env_index = torch.tensor(env_index,device=self.device).view(-1)
-
-        batch_size = env_index.shape[0]
-
-        targets = random.choices(target_terms, k=batch_size)
-        insides = random.choices(start_terms, k=batch_size)
-        spaces = random.choices(space_terms, k=batch_size)
-        searches = random.choices(search_shapes, k=batch_size)
-        positions = random.choices(position_terms, k=batch_size)
-        size_categories = random.choices(["large", "small", "medium"], k=batch_size)
-        sizes = [random.choice(size_terms[cat]) for cat in size_categories]
-
-        # Extracting keywords (lists)
-        for i, idx in enumerate(env_index):
-            dir_1 = self.heading_keywords[idx][0]
-            dir_2 = self.heading_keywords[idx][1]
-
-            # Store results in lists instead of tensors
-            self.headings_pos_string[idx] = [
-                f"The {targets[i]} {insides[i]} the {dir_1} {dir_2} {positions[i]} {spaces[i]}."
-            ]
-
-            print(self.headings_pos_string[idx])
-            
-            self.heading_size_string[idx] = [
-                f"{searches[i]} {sizes[i]}."
-            ]
-
-    def update_sentence_vectors(self, env_index):
-
-        if env_index is None:
-            env_index = torch.arange(self.batch_size,dtype=torch.int, device=self.device)
-        else:
-            env_index = torch.tensor(env_index,device=self.device).view(-1)
-
-        batch_size = env_index.shape[0]
-
-        dir_types_1 = random.choices(list(direction_terms.keys()), k=batch_size)
-        dir_1 = [random.choice(direction_terms[d]) for d in dir_types_1]
-
-        valid_d_types_2 = [
-            random.choice([d for d in direction_terms if d != d1 and d != opposite_directions[d1]])
-            for d1 in dir_types_1
-        ]
-        dir_2 = [random.choice(direction_terms[d]) for d in valid_d_types_2]
-
-        # Convert to NumPy array before tensor
-        val_tensor = np.array([direction_map[d1] for d1 in dir_types_1]) + np.array([direction_map[d2] for d2 in valid_d_types_2])
-        uncertainty = (np.random.rand(batch_size, 2) * 0.5) * -val_tensor
-        val_tensor += uncertainty
-
-        # Convert to PyTorch tensor
-        val_tensor = torch.tensor(val_tensor, dtype=torch.float32, device=self.device)
-
-        # Store keywords in a list
-        for i, idx in enumerate(env_index.tolist()):
-            self.heading_keywords[idx] = [dir_1[i], dir_2[i]]
-
-        # Grid positions (rounded)
-        self.heading_pos_grid[:, 0] = (val_tensor[:, 0] * self.grid_width).floor().to(torch.int)
-        self.heading_pos_grid[:, 1] = (val_tensor[:, 1] * self.grid_height).floor().to(torch.int)
-
-    def collect_embedding(self, env_index):
-
-        if env_index is None:
-            env_index = torch.arange(self.batch_size,dtype=torch.int, device=self.device)
-        else:
-            env_index = torch.tensor(env_index,device=self.device).view(-1)
-        
-        self.heading_embedding = model.encode(self.headings_pos_string)
+        self.decoder_mlp = Decoder(emb_size=EMBEDDING_SIZE).to(self.device)
+        self.decoder_mlp.load_state_dict(torch.load(model_path, map_location=self.device))
+        self.decoder_mlp.eval()
     
-    def _initalize_heading(self, env_index):
+    def spawn_llm_map(self, env_index, n_obstacles, n_agents, n_targets, target_class, padding = True):
 
         if env_index is None:
-            env_index = torch.arange(self.batch_size,dtype=torch.int, device=self.device)
+            env_index = torch.arange(self.batch_size,dtype=torch.int, device=self.device).view(-1,1)
         else:
             env_index = torch.tensor(env_index,device=self.device).view(-1,1)
         
-        self.update_sentence_vectors(env_index)
-        self.update_sentence_from_vector(env_index)
+        packet_size = env_index.shape[0]
+        target_poses = torch.zeros((self.batch_size,n_targets,2),device=self.device)
+        unknown_targets = [] # Targets not hinted through a heading
 
-        target_x = self.heading_pos_grid[env_index,0]
-        target_y = self.heading_pos_grid[env_index,1]
-
-        print(target_x,target_y)
-
-        x_min = (target_x - MINI_GRID_DIM // 2).int()
-        y_min = (target_y - MINI_GRID_DIM // 2).int()
+        if padding: pad = 1 
+        else: pad = 0
         
-        x_range = torch.arange(MINI_GRID_DIM, device=self.device).view(1, -1) + x_min.view(-1, 1)
-        y_range = torch.arange(MINI_GRID_DIM, device=self.device).view(1, -1) + y_min.view(-1, 1)
+        for t in range(self.num_targets):
+            # Convert world coordinates to grid indices
+            rando = random.random()
+            randos = torch.randint(-self.heading_mini_grid_radius,self.heading_mini_grid_radius + 1,(packet_size,2), device=self.device).float() # Create a bit of chaos
+            if rando < self.heading_to_target_ratio:
 
-        x_range = torch.clamp(x_range, min=0, max=self.grid_width - 1)
-        y_range = torch.clamp(y_range, min=0, max=self.grid_height - 1)
+                dir_types_1 = random.choices(list(direction_terms.keys()), k=packet_size)
+                dir_1 = [random.choice(direction_terms[d]) for d in dir_types_1]
 
-        self.grid_heading[env_index.unsqueeze(1).unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)] = 1
+                valid_d_types_2 = [
+                    random.choice([d for d in direction_terms if d != d1 and d != opposite_directions[d1]])
+                    for d1 in dir_types_1
+                ]
+                dir_2 = [random.choice(direction_terms[d]) for d in valid_d_types_2]
 
-        target_pose = self.grid_to_world(target_x, target_y)
+                targets = random.choices(target_terms, k=packet_size)
+                insides = random.choices(start_terms, k=packet_size)
+                spaces = random.choices(space_terms, k=packet_size)
+                searches = random.choices(search_shapes, k=packet_size)
+                positions = random.choices(position_terms, k=packet_size)
+                size_categories = random.choices(["large", "small", "medium"], k=packet_size)
+                sizes = [random.choice(size_terms[cat]) for cat in size_categories]
 
-        return target_pose
+                target_x = torch.zeros((packet_size,),dtype=torch.int,device=self.device)
+                target_y = torch.zeros((packet_size,),dtype=torch.int,device=self.device)
+                for i, idx in enumerate(env_index.tolist()):
+
+                    string_pos = f"The {targets[i]} {insides[i]} the {dir_1[i]} {dir_2[i]} {positions[i]} {spaces[i]}."
+                    string_size = f"{searches[i]} {sizes[i]}."
+
+                    embedding = torch.tensor(llm.encode([string_pos]), device = self.device).squeeze(0)
+                    vec = self.decoder_mlp(embedding)
+                    vec_x = torch.clamp(vec[0] * (self.grid_width - 1) + pad, min=pad, max=self.grid_width - 1)
+                    vec_y = torch.clamp(vec[1] * (self.grid_height - 1) + pad, min=pad, max=self.grid_height - 1)
+                    target_x[i] = vec_x.int()
+                    target_y[i] = vec_y.int()
+
+                heading_center_x = target_x + randos[:,0]
+                heading_center_y = target_y + randos[:,1]
+
+                self.headings[env_index, t, 0] = torch.clamp(heading_center_x.unsqueeze(1), min=self.heading_mini_grid_radius + pad, max=self.grid_width - 1 - self.heading_mini_grid_radius).float()
+                self.headings[env_index, t, 1] = torch.clamp(heading_center_y.unsqueeze(1), min=self.heading_mini_grid_radius + pad, max=self.grid_height - 1 - self.heading_mini_grid_radius).float()
+
+                x_min = (self.headings[env_index, t, 0].squeeze(0) - self.heading_mini_grid_radius).int()
+                y_min = (self.headings[env_index, t, 1].squeeze(0) - self.heading_mini_grid_radius).int()
+                
+                x_range = torch.arange(self.heading_mini_grid_radius*2+1, device=self.device).view(1, -1) + x_min.view(-1, 1)
+                y_range = torch.arange(self.heading_mini_grid_radius*2+1, device=self.device).view(1, -1) + y_min.view(-1, 1)
+
+                x_range = torch.clamp(x_range, min=0, max=self.grid_width - 1)
+                y_range = torch.clamp(y_range, min=0, max=self.grid_height - 1)
+
+                self.grid_heading[env_index.unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)] = 1
+                self.grid_targets[env_index, target_y.unsqueeze(1)+1, target_x.unsqueeze(1)+1] = (TARGET + target_class[env_index]) 
+
+                target_poses[env_index,t] = self.grid_to_world(target_x, target_y).unsqueeze(1)
+
+            else:
+                self.headings[env_index, t] = torch.nan
+                unknown_targets.append(t)
+
+        n_unknown_targets = len(unknown_targets)
+        n_known_targets = self.num_targets - n_unknown_targets
+
+        grid_size = self.grid_width * self.grid_height
+
+        assert grid_size >= n_obstacles + n_agents + n_targets , "Not enough room for all entities"
+
+        # Generate random values and take the indices of the top `n_obstacles` smallest values
+        rand_values = torch.rand(packet_size, grid_size, device=self.device)
+
+        agent_sample_start = torch.randint(0, grid_size - n_agents, (packet_size,), device=self.device)
+        agent_sample_range = torch.arange(0, n_agents, device=self.device).view(1, -1) + agent_sample_start.view(-1, 1)  # Shape: (packet_size, n_agents)
+        agent_batch_indices = torch.arange(packet_size, device=self.device).view(-1, 1).expand_as(agent_sample_range)
+        rand_values[agent_batch_indices, agent_sample_range] = LARGE
+
+        # Filter out heading targets
+        if n_known_targets > 0:
+            all_possible_values = torch.arange(grid_size - 1, device=self.device).unsqueeze(0).repeat(packet_size, 1)
+            agent_positions_expanded = agent_sample_range.unsqueeze(1).repeat(1,grid_size-1,1)
+            mask = all_possible_values.unsqueeze(-1) == agent_positions_expanded
+            mask = mask.sum(dim=-1).bool()
+            probabilities = (~mask).float()
+            probabilities /= probabilities.sum(dim=1, keepdim=True)
+            target_sample_start = torch.multinomial(
+                probabilities, n_known_targets, replacement=False
+            )
+            row_indices = torch.arange(rand_values.size(0)).unsqueeze(1)
+            rand_values[row_indices,target_sample_start] = LARGE - 1
+
+        # Extract obstacle and agent indices
+        sort_indices = torch.argsort(rand_values, dim=1)
+        obstacle_indices = sort_indices[:, :n_obstacles]  # First n_obstacles indices
+        target_indices = sort_indices[:,n_obstacles:n_obstacles+n_unknown_targets]
+        agent_indices = sort_indices[:, -n_agents:]
+
+        # Convert flat indices to (x, y) grid coordinates
+        obstacle_grid_x = (obstacle_indices % self.grid_width).view(packet_size, n_obstacles, 1)
+        obstacle_grid_y = (obstacle_indices // self.grid_width).view(packet_size, n_obstacles, 1)
+
+        target_grid_x = (target_indices % self.grid_width).view(packet_size, n_unknown_targets,1)
+        target_grid_y = (target_indices // self.grid_width).view(packet_size, n_unknown_targets,1)
+
+        agent_grid_x = (agent_indices % self.grid_width).view(packet_size, n_agents, 1)
+        agent_grid_y = (agent_indices // self.grid_width).view(packet_size, n_agents, 1)
+
+        # Update grid_obstacles and grid_targets for the given environments and adjust for padding
+        if padding:
+            self.grid_obstacles[env_index.unsqueeze(1), obstacle_grid_y+1, obstacle_grid_x+1] = OBSTACLE  # Mark obstacles
+            self.grid_targets[env_index.unsqueeze(1), target_grid_y+1, target_grid_x+1] = (TARGET + target_class[env_index.unsqueeze(1)]) # Mark targets 
+        else:
+            self.grid_obstacles[env_index.unsqueeze(1), obstacle_grid_y, obstacle_grid_x] = OBSTACLE  # Mark obstacles
+            self.grid_targets[env_index.unsqueeze(1), target_grid_y, target_grid_x] = (TARGET + target_class[env_index.unsqueeze(1).unsqueeze(2)]) # Mark targets 
+
+        # Convert to world coordinates
+        obstacle_centers = self.grid_to_world(obstacle_grid_x, obstacle_grid_y)  # Ensure shape (packet_size, n_obstacles, 2)
+        target_centers = self.grid_to_world(target_grid_x, target_grid_y)  # Ensure shape (packet_size, n_targets, 2)
+        for i, j in enumerate(unknown_targets):
+            target_poses[:,j] = target_centers[:,i,0]
+        agent_centers = self.grid_to_world(agent_grid_x,agent_grid_y)
+
+        return obstacle_centers.squeeze(-2), agent_centers.squeeze(-2), target_poses
 
     

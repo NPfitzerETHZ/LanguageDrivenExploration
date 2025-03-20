@@ -260,7 +260,7 @@ occupancy_grid = SpatialDiffusionOccupancyGrid(x_dim, y_dim, num_cells, batch_si
 # occupancy_grid.update_obstacles(10,2)
 
 import numpy as np
-num_obstacles = 25
+num_obstacles = 5
 obstacle_coords = np.random.randint(0, x_dim, size=(num_obstacles, 2))
 
 # Update occupancy grid with random obstacles

@@ -56,33 +56,35 @@ class DeadEndOccupancyGrid(OccupancyGrid):
         dead_end_val = torch.full((batch_size, 1, h, w), 0.0, device=device)
         # Identify dead-end cells (cells with exactly 1 open neighbor)
         dead_ends = (grid == 1) & (open_neighbors <= 1)
-        dead_end_val[dead_ends] = 1  # Assign initial dead_end_val to dead-ends
-
-        # Wavefront propagation without explicit loops
-        front = dead_ends.clone().float()  # Active cells (1 if in front, 0 otherwise)
-        distance = torch.zeros_like(grid)  # Track distances
-
-        while front.any():
-            # Create a padded version of front for convolution
-            padded_front = F.pad(front, (1, 1, 1, 1), mode='constant', value=0)
-            # Convolve to expand the wavefront
-            new_front = (F.conv2d(padded_front, kernel) > 0) & (grid == 1) & (dead_end_val == 0)
-            
-            # Update distances (only for newly reached cells)
-            distance[new_front] = distance[front.bool()].min() + 100
-            dead_end_val[new_front] = distance[new_front] ** 0.08
-
-            # Move the front forward
-            front = new_front.float()
-
-        # Normalize the dead_end_val
-        max_dead_end_val = dead_end_val.max()
-        if max_dead_end_val > 0:
-            dead_end_val /= max_dead_end_val  # Normalize to [0,1]
-        dead_end_val[~keep_mask] = 0.
         
-        
-        self.dead_end_grid[env_index] = (1 - dead_end_val) * 0.5 + (1 - free_space) * 0.5
+        if dead_ends.any():
+            dead_end_val[dead_ends] = 1  # Assign initial dead_end_val to dead-ends
+
+            # Wavefront propagation without explicit loops
+            front = dead_ends.clone().float()  # Active cells (1 if in front, 0 otherwise)
+            distance = torch.zeros_like(grid)  # Track distances
+
+            while front.any():
+                # Create a padded version of front for convolution
+                padded_front = F.pad(front, (1, 1, 1, 1), mode='constant', value=0)
+                # Convolve to expand the wavefront
+                new_front = (F.conv2d(padded_front, kernel) > 0) & (grid == 1) & (dead_end_val == 0)
+                
+                # Update distances (only for newly reached cells)
+                distance[new_front] = distance[front.bool()].min() + 100
+                dead_end_val[new_front] = distance[new_front] ** 0.08
+
+                # Move the front forward
+                front = new_front.float()
+
+            # Normalize the dead_end_val
+            max_dead_end_val = dead_end_val.max()
+            if max_dead_end_val > 0:
+                dead_end_val /= max_dead_end_val  # Normalize to [0,1]
+            dead_end_val[~keep_mask] = 0.
+            dead_end_val = 1 - dead_end_val
+
+        self.dead_end_grid[env_index] = dead_end_val * 0.5 + (1 - free_space) * 0.5 
         self.value_grid[env_index] = self.dead_end_grid[env_index]
 
     def update(self, agent_positions):
@@ -95,6 +97,7 @@ class DeadEndOccupancyGrid(OccupancyGrid):
         self.grid_visits_sigmoid[batch_indices, grid_y, grid_x] = 1/(1+torch.exp(self.visit_threshold - self.grid_visits[batch_indices, grid_y, grid_x]))
         self.grid_visited[batch_indices, grid_y, grid_x] = VISITED
         self.value_grid[batch_indices, grid_y, grid_x] = self.dead_end_grid[batch_indices, grid_y, grid_x] + self.grid_visits_sigmoid[batch_indices, grid_y, grid_x]
+        
     def get_deadend_grid_observation(self, pos, mini_grid_dim):
 
         x_range , y_range = self.sample_mini_grid(pos, mini_grid_dim)

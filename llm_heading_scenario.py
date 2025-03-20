@@ -33,38 +33,49 @@ class MyLanguageScenario(MyScenario):
     
     def _load_scenario_config(self,kwargs):
 
-        self.n_targets = kwargs.pop("n_targets", 1)
+        self.n_targets = kwargs.pop("n_targets", 4)
+        self.n_agents = kwargs.pop("n_agents", 6)
+
+        self.use_gnn = kwargs.pop("use_gnn", False)
+        self._comms_range = kwargs.pop("comms_radius", 0.001)
+
+        self.x_semidim = kwargs.pop("x_semidim", 3.0)
+        self.y_semidim = kwargs.pop("y_semidim", 3.0)
 
         self.use_agent_lidar = kwargs.pop("use_agent_lidar", False)
-        self.use_obstacle_lidar = kwargs.pop("use_obstacle_lidar", False)
+        self.use_obstacle_lidar = kwargs.pop("use_obstacle_lidar", True)
         self.add_obstacles = kwargs.pop("add_obstacles", True)  # This isn't implemented yet
 
         # Novelty rewards
         self.use_count_rew = kwargs.pop("use_count_rew", False)
         self.use_entropy_rew = kwargs.pop("use_entropy_rew", False)
         self.use_jointentropy_rew = kwargs.pop("use_jointentropy_rew", False)
-        self.use_occupancy_grid_rew = kwargs.pop("use_occupencygrid_rew", True)
-        self.use_expo_search_rew = kwargs.pop("use_expo_search_rew", False)
+        self.use_occupancy_grid_rew = kwargs.pop("use_occupency_grid_rew", True)
+        self.use_expo_search_rew = kwargs.pop("use_expo_search_rew", True)
 
-        self.agent_collision_penalty = kwargs.pop("agent_collision_penalty", -0.0)
+        self.agent_collision_penalty = kwargs.pop("agent_collision_penalty", 0.00)
         self.obstacle_collision_penalty = kwargs.pop("obstacle_collision_penalty", -0.75)
         self.covering_rew_coeff = kwargs.pop("covering_rew_coeff", 8.0) # Large reward for finding a target
         self.false_covering_penalty_coeff = kwargs.pop("false_covering_penalty_coeff", -0.25) # Penalty for covering wrong target
         self.time_penalty = kwargs.pop("time_penalty", -0.01)
         self.terminal_rew_coeff = kwargs.pop("terminal_rew_coeff", 0.0)
-        self.exponential_search_rew = kwargs.pop("exponential_search_rew_coeff", 0.1)
+        self.exponential_search_rew = kwargs.pop("exponential_search_rew_coeff", 0.75)
 
         #===================
         # Language Driven Goals
+        # 1) Count
+        self.max_target_objective = kwargs.pop("max_target_objective", False) # Enter as fraction of total number of targets
+        # 2) Heading
         self.global_heading_objective = kwargs.pop("global_heading_objective", True)
+        # 3) Attribute
         self.target_attribute_objective = kwargs.pop("target_attribute_objective", False)
         #===================
 
         # Grid
-        self.n_obstacles = kwargs.pop("n_obstacle", 4)
-        self.observe_grid = kwargs.pop("observe_grid",False)
-        self.num_grid_cells = 64 # Must be n^2 with n = width 
-        self.mini_grid_dim = 3
+        self.n_obstacles = kwargs.pop("n_obstacle", 10)
+        self.observe_grid = kwargs.pop("observe_grid",True)
+        self.num_grid_cells = 225 # Must be n^2 with n = width 
+        self.mini_grid_radius = 1
 
         self.plot_grid = True
         self.visualize_semidims = False
@@ -82,7 +93,7 @@ class MyLanguageScenario(MyScenario):
             y_dim=self.y_semidim*2,
             num_cells=self.num_grid_cells,
             num_targets=self.n_targets,
-            mini_grid_dim=self.mini_grid_dim,
+            heading_mini_grid_radius=self.mini_grid_radius * 2,
             device=self.device)
         
         self._covering_range = self.occupancy_grid.cell_radius
@@ -91,9 +102,6 @@ class MyLanguageScenario(MyScenario):
     def _create_obstacles(self, world):
 
         """Create obstacle landmarks and add them to the world."""
-        if not self.add_obstacles:
-            return
-        
         self._obstacles = [
             Landmark(f"obstacle_{i}", collide=True, movable=False, shape=Box(self.occupancy_grid.cell_size_x,self.occupancy_grid.cell_size_y), color=Color.RED)
             for i in range(self.n_obstacles)
@@ -143,7 +151,8 @@ class MyLanguageScenario(MyScenario):
                 self.occupancy_grid.reset_all()
             
             if self.use_expo_search_rew:
-                self.covering_rew_val.zero_()
+                self.covering_rew_val.fill_(1)
+                self.covering_rew_val *= self.covering_rew_coeff
 
         else:
 
@@ -155,7 +164,7 @@ class MyLanguageScenario(MyScenario):
                 self.occupancy_grid.reset_env(env_index)
             
             if self.use_expo_search_rew:
-                self.covering_rew_val[env_index] = 0.0
+                self.covering_rew_val[env_index] = self.covering_rew_coeff
 
             # Reset histories
             for agent in self.world.agents:
@@ -189,8 +198,8 @@ class MyLanguageScenario(MyScenario):
         """Spawn agents, targets, and obstacles randomly while ensuring valid distances."""
 
         n_targets = self.n_targets + (len(self._secondary_targets) if self.target_attribute_objective else 0)
-        print("Numer of targets:", n_targets)
-        obs_poses, agent_poses, _ = self.occupancy_grid.spawn_map(env_index,self.n_obstacles,self.n_agents,n_targets,self.target_class)
+        #obs_poses, agent_poses, _ = self.occupancy_grid.spawn_map(env_index,self.n_obstacles,self.n_agents,n_targets,self.target_class)
+        obs_poses, agent_poses, target_poses = self.occupancy_grid.spawn_llm_map(env_index, self.n_obstacles, self.n_agents, n_targets, self.target_class)
 
         for i in range(obs_poses.shape[0]):
             for j, obs in enumerate(self._obstacles):
@@ -200,14 +209,18 @@ class MyLanguageScenario(MyScenario):
             for j, agent in enumerate(self.world.agents):
                 agent.set_pos(agent_poses[i,j],batch_index=env_index)
 
-        # Initialize Headings
-        target_poses = self.occupancy_grid._initalize_heading(env_index)
-        for target in self._targets[:self.n_targets]:
-            target.set_pos(target_poses,batch_index=env_index)
+        for i in range(target_poses.shape[0]):
+            for j, target in enumerate(self._targets):
+                target.set_pos(target_poses[i,j],batch_index=env_index)
+            # if self.target_attribute_objective:
+            #     for j,target in enumerate(self._secondary_targets):
+            #         target.set_pos(target_poses[i,self.n_targets+j],batch_index=env_index)
+          
         for target in self._targets[self.n_targets :]:
             target.set_pos(self._get_outside_pos(env_index), batch_index=env_index)
         
     def reward(self, agent: Agent):
+
         """Compute the reward for a given agent."""
         is_first = agent == self.world.agents[0]
         is_last = agent == self.world.agents[-1]
@@ -223,17 +236,6 @@ class MyLanguageScenario(MyScenario):
                 device=self.world.device,
             )
     
-            
-
-            # Update diffusion grid if needed
-            # self.occupancy_grid.diffusion_update_count += 1
-            # mask = (self.occupancy_grid.diffusion_update_count == self.occupancy_grid.diffusion_update_thresh)
-            # env_ids = mask.nonzero(as_tuple=True)[0]
-            # if env_ids.numel() > 0:
-            #     self.occupancy_grid.diffusion_update(env_ids)
-            #     self.occupancy_grid.diffusion_update_count[env_ids] = 0
-
-
         # Initialize individual rewards
         agent.collision_rew[:] = 0
         agent.oneshot_rew[:] = 0
@@ -277,12 +279,14 @@ class MyLanguageScenario(MyScenario):
         vel_hist = agent.velocity_history.get_flattened() if self.observe_vel_history else None
 
         # Collect all observation components
-        obs_components = [pos, vel]
-        obs_components.append(self.occupancy_grid.get_grid_target_observation(pos,self.mini_grid_dim))
+        obs_components = []
+        obs_components.append(self.occupancy_grid.get_grid_target_observation(pos,self.mini_grid_radius))
         if self.observe_pos_history:
             obs_components.append(pos_hist[: pos.shape[0], :])
+            agent.position_history.update(pos)
         if self.observe_vel_history:
             obs_components.append(vel_hist[: vel.shape[0], :])
+            agent.velocity_history.update(vel)
         if self.target_attribute_objective:
             obs_components.append(self.target_class.unsqueeze(1))
         if self.max_target_objective:
@@ -290,30 +294,55 @@ class MyLanguageScenario(MyScenario):
             obs_components.append(self.num_covered_targets.unsqueeze(1)/self.n_targets)
         if self.global_heading_objective:
             obs_components.append(self.occupancy_grid.get_heading_distance_observation(pos))
-            #obs_components.append(self.occupancy_grid.get_grid_heading_observation(pos,self.mini_grid_dim))
+            #obs_components.append(self.occupancy_grid.get_grid_heading_observation(pos,self.mini_grid_radius))
         if self.use_occupancy_grid_rew:
-            #obs_components.append(self.occupancy_grid.get_grid_map_observation(pos,self.mini_grid_dim))
-            #obs_components.append(self.occupancy_grid.get_grid_visits_obstacle_observation(pos,self.mini_grid_dim))
-            #obs_components.append(self.occupancy_grid.get_deadend_grid_observation(pos,self.mini_grid_dim))
-            #obs_components.append(self.occupancy_grid.get_value_grid_observation(pos,self.mini_grid_dim))
-            obs_components.append(self.occupancy_grid.get_grid_visits_observation(pos,self.mini_grid_dim))
-            #obs_components.append(self.occupancy_grid.get_grid_obstacle_observation(pos,self.mini_grid_dim))
+            #obs_components.append(self.occupancy_grid.get_grid_map_observation(pos,self.mini_grid_radius))
+            obs_components.append(self.occupancy_grid.get_grid_visits_obstacle_observation(pos,self.mini_grid_radius))
+            #obs_components.append(self.occupancy_grid.get_deadend_grid_observation(pos,self.mini_grid_radius))
+            #obs_components.append(self.occupancy_grid.get_value_grid_observation(pos,self.mini_grid_radius))
+            #obs_components.append(self.occupancy_grid.get_grid_visits_observation(pos,self.mini_grid_radius))
+            #obs_components.append(self.occupancy_grid.get_grid_obstacle_observation(pos,self.mini_grid_radius))
             #obs_components.append(self.occupancy_grid.get_flat_grid_pos_from_pos(pos).unsqueeze(1))
         if self.use_expo_search_rew:
             obs_components.append(self.num_covered_targets.unsqueeze(1))
         if self.use_lidar:
             obs_components.append(lidar_measures)
+        if not self.use_gnn:
+            obs_components.append(pos)
+            obs_components.append(vel)
 
         # Concatenate observations along last dimension
         obs = torch.cat([comp for comp in obs_components if comp is not None], dim=-1)
 
-        # Update history buffers if enabled
-        if self.observe_pos_history:
-            agent.position_history.update(pos)
-        if self.observe_vel_history:
-            agent.velocity_history.update(vel)
+        if self.use_gnn:
+            return {"obs": obs, "pos": pos, "vel": vel}
+        else:
+            return obs
+        
+    def agent_reward(self, agent):
+        agent_index = self.world.agents.index(agent)
 
-        return obs
+        agent.covering_reward[:] = 0
+        targets_covered_by_agent = (
+            self.agents_targets_dists[:, :, agent_index, :] < self._covering_range  # (batch_size, target_groups, n_targets)
+        )
+        num_covered_targets_covered_by_agent = (
+            targets_covered_by_agent * self.covered_targets
+        ).sum(dim=-1)  # (batch_size, target_groups)
+        
+        # Create a mask based on self.target_class
+        reward_mask = torch.arange(self.covered_targets.shape[1], device=self.target_class.device).unsqueeze(0)  # (1, target_groups)
+        reward_mask = (reward_mask == self.target_class.unsqueeze(1))  # (batch_size, target_groups)
+
+        # Apply reward for the selected group and penalty for others
+        group_rewards = (
+            num_covered_targets_covered_by_agent * self.covering_rew_val.unsqueeze(1) * reward_mask
+            + num_covered_targets_covered_by_agent * self.false_covering_penalty_coeff * (~reward_mask)
+        )  # (batch_size, target_groups)
+
+        # Aggregate over target_groups to get (batch_size,)
+        agent.covering_reward += group_rewards.sum(dim=-1)
+        return agent.covering_reward
     
     def extra_render(self, env_index: int = 0) -> "List[Geom]":
         """Render additional visual elements."""
@@ -328,18 +357,6 @@ class MyLanguageScenario(MyScenario):
                 range_circle.add_attr(xform)
                 range_circle.set_color(*self.target_color.value)
                 geoms.append(range_circle)
-
-        # Render communication lines between agents
-        for i, agent1 in enumerate(self.world.agents):
-            for j, agent2 in enumerate(self.world.agents):
-                if j <= i:
-                    continue
-                if self.world.get_distance(agent1, agent2)[env_index] <= self._comms_range:
-                    line = rendering.Line(
-                        agent1.state.pos[env_index], agent2.state.pos[env_index], width=1
-                    )
-                    line.set_color(*Color.BLACK.value)
-                    geoms.append(line)
         
         # Render Occupancy Grid lines
         if self.plot_grid:
@@ -357,8 +374,9 @@ class MyLanguageScenario(MyScenario):
                 geoms.append(line)
 
             # Render grid cells with color based on visit normalization
-            for i in range(grid.grid_width):
-                for j in range(grid.grid_height):
+            heading_grid = grid.grid_heading[env_index,1:-1,1:-1]
+            for i in range(heading_grid.shape[1]):
+                for j in range(heading_grid.shape[0]):
                     x = i * grid.cell_size_x - grid.x_dim / 2
                     y = j * grid.cell_size_y - grid.y_dim / 2
 
@@ -371,15 +389,28 @@ class MyLanguageScenario(MyScenario):
                         rect.set_color(*color)
                         geoms.append(rect)
 
-            #         # Visits
-            #         visit_lvl = grid.grid_visits_sigmoid[env_index, j, i]
-            #         if visit_lvl > 0.05 :
-            #             intensity = visit_lvl.item() * 0.5
-            #             color = (1.0 - intensity, 1.0 - intensity, 1.0)  # Blueish gradient based on visits
-            #             rect = rendering.FilledPolygon([(x, y), (x + grid.cell_size_x, y), 
-            #                                             (x + grid.cell_size_x, y + grid.cell_size_y), (x, y + grid.cell_size_y)])
-            #             rect.set_color(*color)
-            #             geoms.append(rect)
+                    # Visits
+                    visit_lvl = grid.grid_visits_sigmoid[env_index, j, i]
+                    if visit_lvl > 0.05 :
+                        intensity = visit_lvl.item() * 0.5
+                        color = (1.0 - intensity, 1.0 - intensity, 1.0)  # Blueish gradient based on visits
+                        rect = rendering.FilledPolygon([(x, y), (x + grid.cell_size_x, y), 
+                                                        (x + grid.cell_size_x, y + grid.cell_size_y), (x, y + grid.cell_size_y)])
+                        rect.set_color(*color)
+                        geoms.append(rect)
+        # Render communication lines between agents
+        if self.use_gnn:
+            for i, agent1 in enumerate(self.world.agents):
+                for j, agent2 in enumerate(self.world.agents):
+                    if j <= i:
+                        continue
+                    if self.world.get_distance(agent1, agent2)[env_index] <= self._comms_range:
+                        line = rendering.Line(
+                            agent1.state.pos[env_index], agent2.state.pos[env_index], width=3
+                        )
+                        line.set_color(*Color.BLACK.value)
+                        geoms.append(line)
+
 
 
         return geoms
