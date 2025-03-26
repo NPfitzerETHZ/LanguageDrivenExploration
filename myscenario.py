@@ -23,6 +23,7 @@ class MyScenario(BaseScenario):
         self.n_obstacles = kwargs.pop("n_obstacle",5)
         self.x_semidim = kwargs.pop("x_semidim", 1.0)
         self.y_semidim = kwargs.pop("y_semidim", 1.0)
+        self.agent_radius = kwargs.pop("agent_radius", 0.05)
         self._min_dist_between_entities = kwargs.pop("min_dist_between_entities", 0.2)
         self._lidar_range = kwargs.pop("lidar_range", 0.15)
         self._covering_range = kwargs.pop("covering_range", 0.15)
@@ -59,8 +60,6 @@ class MyScenario(BaseScenario):
         ScenarioUtils.check_kwargs_consumed(kwargs)
 
         self.min_collision_distance = 0.005
-        self.agent_radius = 0.05
-        self.target_radius = self.agent_radius
 
         self.viewer_zoom = 1
         self.target_color = Color.GREEN
@@ -116,7 +115,7 @@ class MyScenario(BaseScenario):
             agent = Agent(
                 name=f"agent_{i}",
                 collide=True,
-                shape=Sphere(radius=0.05),
+                shape=Sphere(radius=self.agent_radius),
                 sensors=(self._create_agent_sensors(world) if self.use_lidar else []),
                 color=Color.GREEN
             )

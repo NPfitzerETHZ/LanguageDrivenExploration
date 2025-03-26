@@ -3,7 +3,7 @@ from ray.rllib.models.utils import get_activation_fn
 import torch
 import torch.nn as nn
 
-class CustomTorchModel(TorchModelV2, nn.Module):
+class ActorCriticMLP(TorchModelV2, nn.Module):
     def __init__(self, obs_space, action_space, num_outputs, model_config, name):
         TorchModelV2.__init__(self, obs_space, action_space, num_outputs, model_config, name)
         nn.Module.__init__(self)
@@ -13,15 +13,17 @@ class CustomTorchModel(TorchModelV2, nn.Module):
         # Define a custom MLP model
         self.fc1 = nn.Linear(obs_space.shape[0], 256)
         self.fc2 = nn.Linear(256, 256)
-        self.fc3 = nn.Linear(256, num_outputs)
+        self.fc3 = nn.Linear(256, 256)
+        self.fc4 = nn.Linear(256, num_outputs)
 
         self.activation = activation
-        self.value_branch = nn.Linear(128, 1)  # Separate branch for value function
+        self.value_branch = nn.Linear(256, 1)  # Separate branch for value function
 
     def forward(self, input_dict, state, seq_lens):
         x = self.activation(self.fc1(input_dict["obs"]))
         x = self.activation(self.fc2(x))
-        logits = self.fc3(x)
+        self._last_x = self.activation(self.fc3(x))
+        logits = self.fc4(x)
         return logits, state
 
     def value_function(self):

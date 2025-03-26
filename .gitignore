@@ -22,3 +22,5 @@ logs/
 # ignore renderings
 mappo*
 
+experiments*
+wandb*

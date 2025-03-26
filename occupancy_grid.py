@@ -10,7 +10,7 @@ AGENT=0
 VISITED=1
 OBSTACLE=2
 TARGET=3
-VISITED_TARGET=VISITED+TARGET
+VISITED_TARGET= -1
 
 
 # Proposed Change: Instead of a normalized grid, jsut do visited or not visited.
@@ -44,8 +44,8 @@ class OccupancyGrid:
         self.border_mask[:, -1] = True
 
         self.heading_mini_grid_radius = heading_mini_grid_radius
-        self.headings = torch.zeros((batch_size, num_targets, 2), device=self.device)
-        self.heading_to_target_ratio = 0.7
+        self.headings = torch.zeros((batch_size, num_targets, 2), dtype=torch.int, device=self.device)
+        self.heading_to_target_ratio = 1.0
 
         ###  MAPS ###
         # grid obstacles
@@ -54,10 +54,8 @@ class OccupancyGrid:
         # grid targets
         self.grid_targets = torch.zeros((batch_size,self.padded_grid_height, self.padded_grid_width), dtype=torch.int32, device=self.device)
         #grid headings
-        self.grid_heading = torch.zeros((batch_size,self.padded_grid_height, self.padded_grid_width), dtype=torch.int32, device=self.device)
-        # MAP grid
-        self.grid_map = torch.zeros((batch_size,self.padded_grid_height, self.padded_grid_width), dtype=torch.int32, device=self.device)
-        self.grid_map[:, self.border_mask] = OBSTACLE
+        self.grid_heading = torch.zeros((batch_size,self.padded_grid_height, self.padded_grid_width), device=self.device)
+        self.grid_gaussian_heading = torch.zeros((batch_size,self.num_targets,self.padded_grid_height, self.padded_grid_width), device=self.device)
 
         # Initialize the visit count grid (keeps track of visits per cell)
         self.grid_visits = torch.zeros((batch_size,self.padded_grid_height, self.padded_grid_width), device=self.device)
@@ -99,7 +97,7 @@ class OccupancyGrid:
 
                 self.grid_heading[env_index.unsqueeze(1).unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)] = 1
             else:
-                self.headings[env_index, i] = torch.nan
+                self.headings[env_index, i] = VISITED_TARGET
     
     def world_to_grid(self, pos, padding):
         """
@@ -198,16 +196,17 @@ class OccupancyGrid:
         # All found heading coordinates are set to a out of bounds value (not sure this will work)
 
         mask = all_time_covered_targets  # (batch, n_targets)
+        env_ids = mask.nonzero(as_tuple=True)[0] # Get batch indices where targets are found
         grid_x, grid_y = self.headings[mask][:, 0], self.headings[mask][:, 1]
-        env_ids = mask.nonzero(as_tuple=True)[0]  # Get batch indices where targets are found
+
         # Mark covered targets with out-of-bounds value (-1)
-        self.headings[mask] = torch.nan
+        self.headings[mask] = VISITED_TARGET
 
         # Only update for newly discovered headings 
         update_indices = torch.where((grid_x >= 0) & (grid_y >= 0))
 
-        x_min = (grid_x[update_indices] - self.heading_mini_grid_radius).int()
-        y_min = (grid_y[update_indices] - self.heading_mini_grid_radius).int()
+        x_min = (grid_x[update_indices] - self.heading_mini_grid_radius)
+        y_min = (grid_y[update_indices] - self.heading_mini_grid_radius)
 
         x_range = torch.arange(self.heading_mini_grid_radius*2+1, device=self.device).view(1, -1) + x_min.view(-1, 1)
         y_range = torch.arange(self.heading_mini_grid_radius*2+1, device=self.device).view(1, -1) + y_min.view(-1, 1)
@@ -217,8 +216,50 @@ class OccupancyGrid:
         y_range = torch.clamp(y_range, min=0, max=self.grid_height)
 
         self.grid_heading[env_ids[update_indices].unsqueeze(1).unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)] = 0
-
     
+
+    def gaussian_heading(self, env_index, pos, heading_idx, sigma_x=2, sigma_y=2):
+        """
+        pos: (batch_size, 2)
+        env_index: (batch_size,)
+        """
+
+        batch_size = pos.shape[0]
+
+        # Create meshgrid once for all grid points
+        x_range = torch.arange(self.padded_grid_width, device=pos.device).float()
+        y_range = torch.arange(self.padded_grid_height, device=pos.device).float()
+        grid_x, grid_y = torch.meshgrid(y_range, x_range, indexing='xy')  # shape: (H, W)
+
+        grid_x = grid_x.unsqueeze(0)  # (1, W, H)
+        # Expand to batch size
+        grid_y = grid_y.unsqueeze(0)  # (1, W, H)
+
+        pos_x = pos[:,0 ,0].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
+        pos_y = pos[:,0 ,1].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
+
+        dist_x = ((grid_x - pos_x) / sigma_x) ** 2
+        dist_y = ((grid_y - pos_y) / sigma_y) ** 2
+
+        heading_val = (1 / (2 * torch.pi * sigma_x * sigma_y)) * torch.exp(-0.5 * (dist_x + dist_y))  # (B, W, H)
+        heading_val = heading_val / heading_val.view(batch_size, -1).max(dim=1)[0].view(-1, 1, 1)
+
+        # Update grid_heading only if the new value is higher
+        for i in range(batch_size):
+            self.grid_gaussian_heading[env_index[i],heading_idx] = heading_val[i]
+            self.grid_heading[env_index[i]] = torch.max(self.grid_heading[env_index[i]], heading_val[i])
+    
+    def update_gaussian_heading(self, all_time_covered_targets: torch.Tensor):
+
+        # All found heading coordinates are set to a out of bounds value (not sure this will work)
+
+        mask = all_time_covered_targets  # (batch, n_targets)
+        self.headings[mask] = VISITED_TARGET
+        self.grid_gaussian_heading[mask] = 0.0
+        self.grid_heading = self.grid_gaussian_heading.max(dim=1).values
+        visit_mask = (self.grid_visited == VISITED)
+        self.grid_heading[visit_mask] = 0.0
+
     def get_grid_visits_observation(self, pos, mini_grid_radius):
 
         x_range , y_range = self.sample_mini_grid(pos, mini_grid_radius)
@@ -262,54 +303,52 @@ class OccupancyGrid:
         mini_grid = self.grid_heading[torch.arange(pos.shape[0]).unsqueeze(1).unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)]
 
         return mini_grid.flatten(start_dim=1, end_dim=-1)
-    
-    def get_grid_map_observation(self, pos, mini_grid_radius):
 
-        x_range , y_range = self.sample_mini_grid(pos, mini_grid_radius)
-        mini_grid_visited = self.grid_visited[torch.arange(pos.shape[0]).unsqueeze(1).unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)]
-        mini_grid_map = self.grid_map[torch.arange(pos.shape[0]).unsqueeze(1).unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)]
-
-        mini_grid = mini_grid_visited + mini_grid_map
-
-        return mini_grid.flatten(start_dim=1, end_dim=-1)
-    
     def get_heading_distance_observation(self,pos):
 
         grid_x, grid_y = self.world_to_grid(pos, padding=True)
 
         grid_coords = torch.stack((grid_x, grid_y), dim=1).unsqueeze(1)
         dist = self.headings - grid_coords
-        dist = torch.nan_to_num(dist, nan=0.0)
+        dist[self.headings == VISITED_TARGET] = 0
         #("observation: ",dist.flatten(start_dim=1,end_dim=-1)[0])
 
         return dist.flatten(start_dim=1,end_dim=-1)
+    
+    def get_absolute_heading_observation(self):
 
-    def compute_exploration_bonus(self, agent_positions):
+        return self.headings.flatten(start_dim=1,end_dim=-1)
+
+
+
+    def compute_exploration_bonus(self, agent_positions, exploration_rew_coeff = 0.02, new_cell_rew_coeff = 0.25):
         """
         Compute exploration reward: Reward for visiting new cells.
         """
         grid_x, grid_y = self.world_to_grid(agent_positions, padding=True)
         #visits = self.grid_visits_normalized[torch.arange(agent_positions.shape[0]), grid_y, grid_x]
         visit_lvl = self.grid_visits_sigmoid[torch.arange(agent_positions.shape[0]), grid_y, grid_x]
-        new_cell_bonus = (visit_lvl < 0.2).float() * 0.5
+        new_cell_bonus = (visit_lvl < 0.2).float() * new_cell_rew_coeff
         #visits = self.grid_visited[torch.arange(agent_positions.shape[0]), grid_y, grid_x]
 
         # Works good, negative reward with short postive.
-        reward = -0.03 * visit_lvl + new_cell_bonus #  Sigmoid Penalty for staying in a visited cell + bonus for discovering a new cell
+        reward = - exploration_rew_coeff * visit_lvl + new_cell_bonus #  Sigmoid Penalty for staying in a visited cell + bonus for discovering a new cell
 
         # Here I try postive reward only
         #reward = 0.05*(1/(1+torch.exp(visits - 3)))
         #return -0.05 * visit_lvl
         return reward
     
-    def compute_heading_bonus(self,pos):
+    def compute_heading_bonus(self,pos, heading_exploration_rew_coeff = 2.0):
 
         grid_x, grid_y = self.world_to_grid(pos, padding=True)
 
         in_heading_cell = self.grid_heading[torch.arange(pos.shape[0]),grid_y,grid_x]
         visit_lvl = self.grid_visits_sigmoid[torch.arange(pos.shape[0]), grid_y, grid_x]
+        heading_val = self.grid_heading[torch.arange(pos.shape[0]),grid_y,grid_x]
 
-        return in_heading_cell * (1 - visit_lvl) * 5.0  # Huge reward for discovering a heading cell, but staying there is not beneficial
+        return heading_val
+        #return in_heading_cell * heading_exploration_rew_coeff  # Huge reward for discovering a heading cell, but staying there is not beneficial
     
     
     def sample_mini_grid(self,pos,mini_grid_radius):
@@ -337,10 +376,9 @@ class OccupancyGrid:
 
         self.grid_targets.zero_()
         self.grid_heading.zero_()
+        self.grid_gaussian_heading.zero_()
         self.headings.zero_()
     
-        self.grid_map.zero_()
-        self.grid_map[:,self.border_mask] = OBSTACLE
         self.grid_obstacles.zero_()
         self.grid_obstacles[:,self.border_mask] = OBSTACLE
 
@@ -354,9 +392,8 @@ class OccupancyGrid:
 
         self.grid_targets[env_index].zero_()
         self.grid_heading[env_index].zero_()
+        self.grid_gaussian_heading[env_index].zero_()
         self.headings[env_index].zero_()
 
-        self.grid_map[env_index].zero_()
-        self.grid_map[env_index,self.border_mask] = OBSTACLE
         self.grid_obstacles[env_index].zero_()
         self.grid_obstacles[env_index,self.border_mask] = OBSTACLE

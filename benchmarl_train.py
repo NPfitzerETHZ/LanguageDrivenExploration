@@ -14,6 +14,9 @@ from benchmarl.experiment import ExperimentConfig, Experiment
 from benchmarl.algorithms import MappoConfig
 from benchmarl.models.mlp import MlpConfig
 
+import os
+from pathlib import Path
+
 def get_env_fun(
     self,
     num_envs: int,
@@ -58,7 +61,9 @@ algorithm_config = MappoConfig.get_from_yaml()
 algorithm_config.entropy_coef = 0.00
 # Loads from "benchmarl/conf/model/layers/mlp.yaml"
 model_config = MlpConfig.get_from_yaml()
+model_config.num_cells = [256, 256, 256]
 critic_model_config = MlpConfig.get_from_yaml()
+critic_model_config.num_cells = [256, 256, 256]
 
 if use_gnn:
     gnn_config = GnnConfig(
@@ -77,8 +82,8 @@ if use_gnn:
     mlp_config = MlpConfig.get_from_yaml()
     model_config = SequenceModelConfig(model_configs=[gnn_config, mlp_config], intermediate_sizes=[256])
 
-train_device = "cuda" # @param {"type":"string"}
-vmas_device = "cuda" # @param {"type":"string"}
+train_device = "cpu" # @param {"type":"string"}
+vmas_device = "cpu" # @param {"type":"string"}
 experiment_config.sampling_device = vmas_device
 experiment_config.train_device = train_device
 
@@ -90,9 +95,16 @@ experiment_config.loggers = ["csv"]
 experiment_config.max_n_frames = 6_000_000 # Runs one iteration, change to 50_000_000 for full training
 experiment_config.evaluation_interval = 60_000
 experiment_config.on_policy_collected_frames_per_batch = 30_000
-experiment_config.on_policy_n_envs_per_worker = 50
-experiment_config.on_policy_minibatch_size=2000  # closer to RLlib’s 4096
-experiment_config.on_policy_n_minibatch_iters=20
+experiment_config.on_policy_n_envs_per_worker = 1_000
+experiment_config.on_policy_minibatch_size = 4_000  # closer to RLlib’s 4096
+experiment_config.on_policy_n_minibatch_iters = 45
+
+experiment_config.save_folder = Path(os.path.dirname(os.path.realpath(__file__))) / "experiments"
+experiment_config.save_folder.mkdir(parents=True, exist_ok=True)
+# Checkpoint at every 3rd iteration
+experiment_config.checkpoint_interval = (
+    experiment_config.on_policy_collected_frames_per_batch * 3
+)
 
 print(experiment_config)
 print(algorithm_config)
