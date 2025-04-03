@@ -18,9 +18,6 @@ class MyScenario(BaseScenario):
     def _load_config(self,kwargs):
 
         #self.num_envs = kwargs.pop("num_envs", 96) disregard for BenchMarl
-        self.n_agents = kwargs.pop("n_agents", 2)
-        self.n_targets = kwargs.pop("n_targets", 4)
-        self.n_obstacles = kwargs.pop("n_obstacle",5)
         self.x_semidim = kwargs.pop("x_semidim", 1.0)
         self.y_semidim = kwargs.pop("y_semidim", 1.0)
         self.agent_radius = kwargs.pop("agent_radius", 0.05)
@@ -28,10 +25,8 @@ class MyScenario(BaseScenario):
         self._lidar_range = kwargs.pop("lidar_range", 0.15)
         self._covering_range = kwargs.pop("covering_range", 0.15)
 
-        self.use_lidar = kwargs.pop("use_lidar", True)
         self.use_target_lidar = kwargs.pop("use_target_lidar", False)
         self.use_agent_lidar = kwargs.pop("use_agent_lidar", False)
-        self.use_obstacle_lidar = kwargs.pop("use_obstacle_lidar", False)
         self.n_lidar_rays_entities = kwargs.pop("n_lidar_rays_entities", 8)
         self.n_lidar_rays_agents = kwargs.pop("n_lidar_rays_agents", 12)
 
@@ -74,17 +69,6 @@ class MyScenario(BaseScenario):
         self.vel_history_length = 30
         self.vel_dim = 2
         self.observe_vel_history = kwargs.pop("observe_vel_history", False)
-
-        #===================
-        # Language Driven Goals
-        # 1) Count
-        self.max_target_objective = kwargs.pop("max_target_objective", False) # Enter as fraction of total number of targets
-        # 2) Heading
-        self.global_heading_objective = kwargs.pop("global_heading_objective", False)
-        self.location_radius = kwargs.pop("location:radius", 0.5) 
-        # 3) Attribute
-        self.target_attribute_objective = kwargs.pop("target_attribute_objective", True)
-        #===================
 
         # Corridors
         self.num_corridors = 2

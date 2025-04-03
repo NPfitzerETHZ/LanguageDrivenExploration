@@ -2,7 +2,7 @@ import random
 import torch
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from occupancy_grid import OccupancyGrid, TARGET, OBSTACLE, VISITED_TARGET
+from occupancy_grid import OccupancyGrid, TARGET, OBSTACLE, VISITED_TARGET, VISITED
 import torch.nn as nn
 
 from pathlib import Path
@@ -51,6 +51,9 @@ start_terms = [
 position_terms = [
     "Edge", "corner", "side","flank","border"
 ]
+
+ordinal_prefixes = ["The first", "The second", "The third", "The fourth", "The fifth",
+                            "The sixth", "The seventh", "The eighth", "The ninth", "The tenth"]
 
 direction_terms = {
     "left": ["West", "Western", "Left", "Westerly", "Westernmost", "Leftmost", "Leftward", "Left-hand"],
@@ -110,20 +113,28 @@ size_map = {
     "small": 0.33
 }
 
+llm = None  # initially None, not loaded
+
+def load_llm(device='cpu'):
+    global llm
+    from sentence_transformers import SentenceTransformer
+    llm = SentenceTransformer('thenlper/gte-large', device=device)
+
 MINI_GRID_RADIUS = 1
 EMBEDDING_SIZE = 1024
 
-class HeadingOccupancyGrid(OccupancyGrid):
+class MultiHeadingOccupancyGrid(OccupancyGrid):
     def __init__(self, x_dim, y_dim, num_cells, batch_size, num_targets, heading_mini_grid_radius=1, device='cpu'):
         super().__init__(x_dim, y_dim, num_cells, batch_size, num_targets, heading_mini_grid_radius, device)
-
-        self.llm = SentenceTransformer('thenlper/gte-large', device=device)
         
         self.decoder_mlp = Decoder(emb_size=EMBEDDING_SIZE).to(self.device)
         self.decoder_mlp.load_state_dict(torch.load(model_path, map_location=self.device))
         self.decoder_mlp.eval()
 
-        self.heading_embeddings = torch.zeros((self.batch_size,self.num_targets,EMBEDDING_SIZE),device=self.device)
+        self.heading_embeddings = torch.zeros((self.batch_size,EMBEDDING_SIZE),device=self.device)
+        self.heading_sentences = [[ "" for _ in range(self.num_targets) ] for _ in range(self.batch_size)]
+        
+        self.searching_hinted_target = torch.zeros((self.batch_size,self.num_targets), dtype=torch.bool, device=self.device)
     
     def spawn_llm_map(self, env_index, n_obstacles, n_agents, n_targets, target_class, llm_activate, padding = True):
 
@@ -135,12 +146,17 @@ class HeadingOccupancyGrid(OccupancyGrid):
         if padding: pad = 1 
         else: pad = 0
         
+        hinted_target_count = 0
+        headings_strings = [""] * packet_size
+        
         for t in range(self.num_targets):
             # Convert world coordinates to grid indices
             rando = random.random()
             #randos = torch.randint(-self.heading_mini_grid_radius,self.heading_mini_grid_radius + 1,(packet_size,2), device=self.device).int() # Create a bit of chaos
             randos = torch.randint(0,self.heading_mini_grid_radius + 1,(packet_size,2), device=self.device).int()
             if rando < self.heading_to_target_ratio and llm_activate:
+                
+                self.searching_hinted_target[env_index,t] = True
 
                 dir_types_1 = random.choices(list(direction_terms.keys()), k=packet_size)
                 dir_1 = [random.choice(direction_terms[d]) for d in dir_types_1]
@@ -159,45 +175,34 @@ class HeadingOccupancyGrid(OccupancyGrid):
                 size_categories = random.choices(["large", "small", "medium"], k=packet_size)
                 sizes = [random.choice(size_terms[cat]) for cat in size_categories]
 
-                batch_strings = [f"The {targets[i]} {insides[i]} the {dir_1[i]} {dir_2[i]} {positions[i]} {spaces[i]}." for i in range(packet_size)]
-                # for i, idx in enumerate(env_index.tolist()):
-
-                #     string_pos = f"The {targets[i]} {insides[i]} the {dir_1[i]} {dir_2[i]} {positions[i]} {spaces[i]}."
-                #     #string_size = f"{searches[i]} {sizes[i]}."
-
-                embedding = torch.tensor(self.llm.encode(batch_strings), device = self.device).squeeze(0)
-                self.heading_embeddings[env_index.squeeze(1),t] = embedding
-                vec = self.decoder_mlp(embedding).view(-1,2)
-                vec_x = torch.clamp(vec[:,0] * (self.grid_width - 1) + pad + randos[:,0], min=pad, max=self.grid_width - 1).int()
-                vec_y = torch.clamp(vec[:,1] * (self.grid_height - 1) + pad + randos[:,1], min=pad, max=self.grid_height - 1).int()
-
-                heading_center_x = vec_x # + randos[:,0]
-                heading_center_y = vec_y # + randos[:,1]
-
-                # self.headings[env_index, t, 0] = torch.clamp(heading_center_x.unsqueeze(1), min=self.heading_mini_grid_radius + pad, max=self.grid_width - 1 - self.heading_mini_grid_radius)
-                # self.headings[env_index, t, 1] = torch.clamp(heading_center_y.unsqueeze(1), min=self.heading_mini_grid_radius + pad, max=self.grid_height - 1 - self.heading_mini_grid_radius)
-
-                self.headings[env_index, t, 0] = heading_center_x.unsqueeze(1)
-                self.headings[env_index, t, 1] = heading_center_y.unsqueeze(1)
-
-                # x_min = (self.headings[env_index, t, 0].squeeze(0) - self.heading_mini_grid_radius).int()
-                # y_min = (self.headings[env_index, t, 1].squeeze(0) - self.heading_mini_grid_radius).int()
+                vec = torch.zeros((packet_size,2), device=self.device)
+                for i, idx in enumerate(env_index):
+                    sentence = f"{targets[i]} {insides[i]} the {dir_1[i]} {dir_2[i]} {positions[i]} {spaces[i]}."
+                    self.heading_sentences[idx][t] = sentence
+                    headings_strings[i] += f"{ordinal_prefixes[hinted_target_count]} {targets[i]} {insides[i]} the {dir_1[i]} {dir_2[i]} {positions[i]} {spaces[i]}."
+                    d_1 = torch.tensor(direction_map[dir_types_1[i]], device=self.device)
+                    d_2 = torch.tensor(direction_map[valid_d_types_2[i]], device=self.device)
+                    vec[i] = d_1 + d_2
+                hinted_target_count += 1
                 
-                # x_range = torch.arange(self.heading_mini_grid_radius*2+1, device=self.device).view(1, -1) + x_min.view(-1, 1)
-                # y_range = torch.arange(self.heading_mini_grid_radius*2+1, device=self.device).view(1, -1) + y_min.view(-1, 1)
+                x_rando_sign = (0.5 - vec[:,0])/torch.abs(0.5 - vec[:,0])
+                y_rando_sign = (0.5 - vec[:,1])/torch.abs(0.5 - vec[:,1])
 
-                # x_range = torch.clamp(x_range, min=0, max=self.grid_width - 1)
-                # y_range = torch.clamp(y_range, min=0, max=self.grid_height - 1)
+                vec[:,0] = torch.clamp(vec[:,0] * (self.grid_width - 1) + pad + x_rando_sign*randos[:,0], min=pad, max=self.grid_width - 1).int()
+                vec[:,1] = torch.clamp(vec[:,1] * (self.grid_height - 1) + pad + y_rando_sign*randos[:,1], min=pad, max=self.grid_height - 1).int()
 
-                #self.grid_heading[env_index.unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)] = 1
-                self.gaussian_heading(env_index,self.headings[env_index,t],t,self.heading_mini_grid_radius,self.heading_mini_grid_radius)
-                self.grid_targets[env_index, vec_y.unsqueeze(1), vec_x.unsqueeze(1)] = (TARGET + target_class[env_index]) 
+                self.gaussian_heading(env_index,vec,t,self.heading_mini_grid_radius,self.heading_mini_grid_radius)
+                self.grid_targets[env_index, vec[:,1].unsqueeze(1).int(), vec[:,0].unsqueeze(1).int()] = (TARGET + target_class[env_index]) 
 
-                target_poses[:,t] = self.grid_to_world(vec_x-pad, vec_y-pad)
+                target_poses[:,t] = self.grid_to_world(vec[:,0]-pad, vec[:,1]-pad)
 
             else:
-                self.headings[env_index, t] = VISITED_TARGET
                 unknown_targets.append(t)
+            
+        if hinted_target_count > 0:
+            embedding = torch.tensor(llm.encode(headings_strings), device = self.device).squeeze(0)
+            self.heading_embeddings[env_index.squeeze(1)] = embedding
+            
 
         n_unknown_targets = len(unknown_targets)
         n_known_targets = self.num_targets - n_unknown_targets
@@ -264,5 +269,79 @@ class HeadingOccupancyGrid(OccupancyGrid):
     def observe_embeddings(self):
 
         return self.heading_embeddings.flatten(start_dim=1,end_dim=-1)
-
     
+    def update_instruction(self, env_index):
+        
+        """
+        Given a tensor of env indices, format each sentence snippet in heading_sentences with an ordinal prefix
+        and concatenate them into a single instruction string for each environment index.
+
+        Args:
+            env_index (Tensor): 1D tensor of environment indices.
+
+        Returns:
+            List[str]: A list of formatted instruction strings, one for each index.
+        """
+        self.heading_embeddings[env_index] = 0.
+        instructions = []
+        update_indices = []
+        
+        for idx in env_index:
+            idx = idx.item()
+            sentence_list = self.heading_sentences[idx]
+
+            formatted_sentences = []
+            i = 0
+            for sentence in sentence_list:
+                if len(sentence) > 0:
+                    prefix = ordinal_prefixes[i] if i < len(ordinal_prefixes) else f"The {i+1}th"
+                    formatted_sentences.append(f"{prefix} {sentence.strip()}")
+                    i += 1
+            instruction = " ".join(formatted_sentences)
+            if len(instruction) > 0:
+                instructions.append(instruction)
+                update_indices.append(idx)
+            
+        if instructions:
+            embedding = torch.tensor(llm.encode(instructions), device=self.device)
+            if embedding.ndim == 2:  # shape: (N, embedding_dim)
+                self.heading_embeddings[update_indices] = embedding
+            elif embedding.ndim == 1:  # edge case: single sentence, (embedding_dim,)
+                self.heading_embeddings[update_indices[0]] = embedding
+    
+    def update_gaussian_heading(self, all_time_covered_targets: torch.Tensor):
+
+        # Mask for all time found targets
+        mask = all_time_covered_targets  # (batch, n_targets)
+        # Remove potential for found headings
+        self.grid_gaussian_heading[mask] = 0.0
+        # Recompute total grid potential
+        self.grid_heading = self.grid_gaussian_heading.max(dim=1).values
+        # Visited cells are emptied out
+        visit_mask = (self.grid_visited == VISITED)
+        self.grid_heading[visit_mask] = 0.0
+        
+        # Recompute embedding if a hinted target is found.
+        # 1) Find indices of found targets - Find where mask and self.searching_hinted_target are both true
+        env_index, target_index = torch.where(mask & self.searching_hinted_target)
+        # 2) Clear the cached sentence associated to that heading
+        self.searching_hinted_target[env_index,target_index] = False # No longer searching for this target.
+        for env_i, tgt_i in zip(env_index.tolist(), target_index.tolist()):
+            self.heading_sentences[env_i][tgt_i] = ""
+        # 3) Compute new instruction with remaining hinted targets (if any) and generate new embedding
+        self.update_instruction(env_index)
+    
+    def reset_all(self):
+        self.heading_sentences = [[ "" for _ in range(self.num_targets) ] for _ in range(self.batch_size)]
+        self.searching_hinted_target.zero_()
+        self.heading_embeddings.zero_()
+        return super().reset_all()
+    
+    def reset_env(self, env_index):
+        
+        self.heading_sentences[env_index] = [ "" for _ in range(self.num_targets) ]   
+        self.heading_embeddings[env_index].zero_()
+        self.searching_hinted_target[env_index].zero_()
+        return super().reset_env(env_index)
+            
+

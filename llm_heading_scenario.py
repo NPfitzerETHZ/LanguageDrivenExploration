@@ -15,6 +15,7 @@ if typing.TYPE_CHECKING:
 from myscenario import MyScenario
 from dead_end import DeadEndOccupancyGrid
 from heading import HeadingOccupancyGrid
+from multiple_headings import MultiHeadingOccupancyGrid, load_llm
 
 class MyLanguageScenario(MyScenario):
 
@@ -38,13 +39,11 @@ class MyLanguageScenario(MyScenario):
 
         self.use_gnn = kwargs.pop("use_gnn", False)
         self._comms_range = kwargs.pop("comms_radius", 0.35)
-
-        self.x_semidim = kwargs.pop("x_semidim", 1.0)
-        self.y_semidim = kwargs.pop("y_semidim", 1.0)
         self.agent_radius = kwargs.pop("agent_radius", 0.025)
 
+        self.use_lidar = kwargs.pop("use_lidar", False)
         self.use_agent_lidar = kwargs.pop("use_agent_lidar", False)
-        self.use_obstacle_lidar = kwargs.pop("use_obstacle_lidar", True)
+        self.use_obstacle_lidar = kwargs.pop("use_obstacle_lidar", False)
         self.add_obstacles = kwargs.pop("add_obstacles", True)  # This isn't implemented yet
 
         # Novelty rewards
@@ -67,15 +66,15 @@ class MyLanguageScenario(MyScenario):
         # 1) Count
         self.max_target_objective = kwargs.pop("max_target_objective", False) # Enter as fraction of total number of targets
         # 2) Heading
-        self.global_heading_objective = kwargs.pop("global_heading_objective", True)
+        self.global_heading_objective = kwargs.pop("global_heading_objective", False)
         # 3) Attribute
         self.target_attribute_objective = kwargs.pop("target_attribute_objective", False)
         #===================
 
         # Grid
-        self.n_obstacles = kwargs.pop("n_obstacle", 40)
+        self.n_obstacles = kwargs.pop("n_obstacles", 10)
         self.observe_grid = kwargs.pop("observe_grid",True)
-        self.num_grid_cells = 400 # Must be n^2 with n = width 
+        self.num_grid_cells = kwargs.pop("num_grid_cells", 400) # Must be n^2 with n = width 
         self.mini_grid_radius = 2
 
         self.plot_grid = True
@@ -87,8 +86,9 @@ class MyLanguageScenario(MyScenario):
         self.observe_pos_history = kwargs.pop("observe_pos_history", True)
 
     def _create_occupancy_grid(self, batch_dim):
-
-        self.occupancy_grid = HeadingOccupancyGrid(
+        
+        load_llm(self.device)
+        self.occupancy_grid = MultiHeadingOccupancyGrid(
             batch_size=batch_dim,
             x_dim=self.x_semidim*2,
             y_dim=self.y_semidim*2,
@@ -96,6 +96,7 @@ class MyLanguageScenario(MyScenario):
             num_targets=self.n_targets,
             heading_mini_grid_radius=self.mini_grid_radius*2,
             device=self.device)
+        
         
         self._covering_range = self.occupancy_grid.cell_radius
 

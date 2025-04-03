@@ -45,7 +45,7 @@ class OccupancyGrid:
 
         self.heading_mini_grid_radius = heading_mini_grid_radius
         self.headings = torch.zeros((batch_size, num_targets, 2), dtype=torch.int, device=self.device)
-        self.heading_to_target_ratio = 1.0
+        self.heading_to_target_ratio = 0.75
 
         ###  MAPS ###
         # grid obstacles
@@ -235,8 +235,10 @@ class OccupancyGrid:
         # Expand to batch size
         grid_y = grid_y.unsqueeze(0)  # (1, W, H)
 
-        pos_x = pos[:,0 ,0].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
-        pos_y = pos[:,0 ,1].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
+        # pos_x = pos[:,0 ,0].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
+        # pos_y = pos[:,0 ,1].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
+        pos_x = pos[:,0].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
+        pos_y = pos[:,1].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
 
         dist_x = ((grid_x - pos_x) / sigma_x) ** 2
         dist_y = ((grid_y - pos_y) / sigma_y) ** 2
