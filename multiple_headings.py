@@ -124,6 +124,7 @@ MINI_GRID_RADIUS = 1
 EMBEDDING_SIZE = 1024
 
 class MultiHeadingOccupancyGrid(OccupancyGrid):
+    
     def __init__(self, x_dim, y_dim, num_cells, batch_size, num_targets, heading_mini_grid_radius=1, device='cpu'):
         super().__init__(x_dim, y_dim, num_cells, batch_size, num_targets, heading_mini_grid_radius, device)
         

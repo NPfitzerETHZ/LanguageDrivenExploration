@@ -191,29 +191,11 @@ class MyScenario(BaseScenario):
     def _initialize_rewards(self, batch_dim):
 
         """Initialize global rewards."""
-        self.covered_targets = torch.zeros(batch_dim, self.n_targets, device=self.device)
         self.shared_covering_rew = torch.zeros(batch_dim, device=self.device)
         self.agent_stopped = torch.zeros(batch_dim, self.n_agents, dtype=torch.bool, device=self.device)
-        self.jointentropy_rew = JointEntropyBasedReward(radius=self._lidar_range, n_agents=self.n_agents, max_buffer_size=30)
         self.num_covered_targets = torch.zeros(batch_dim, device=self.device)
         self.covering_rew_val = torch.ones(batch_dim, device=self.device) * (self.covering_rew_coeff)
-        #===================
-        # Language Driven Goals
-        # 1) Count
-        self.max_target_count = torch.ones(batch_dim, device=self.device) # Initialized to n_targets (ratio)
-        # 2) Heading
-        self.search_coordinates = torch.zeros((batch_dim,2),device=self.device) # Initialized to center
-        self.possible_coordinates = torch.tensor([
-            [-self.x_semidim / 2, -self.y_semidim / 2],
-            [-self.x_semidim / 2,  self.y_semidim / 2],
-            [ self.x_semidim / 2, -self.y_semidim / 2],
-            [ self.x_semidim / 2,  self.y_semidim / 2]
-        ], device=self.device)
-        # 3) Attribute
-        self.target_class = torch.zeros(batch_dim, dtype=torch.int, device=self.device)
-        self.targets_pos = torch.zeros((batch_dim,len(self.target_groups),self.n_targets,2), device=self.device)
-        #==================
-    
+       
     #====================================================================================================================
     #====================================================================================================================
 
@@ -389,32 +371,6 @@ class MyScenario(BaseScenario):
         
         return reward
     
-    def _compute_ld_rewards(self, agent):
-
-        """Compute rewards for language-driven concepts"""
-        reward = torch.zeros(self.world.batch_dim, device=self.world.device)
-
-        # 1) Count
-        if self.max_target_objective:
-            #Activate oneshot penalty once the max target objective has been reached
-            self.num_covered_targets = self.all_time_covered_targets.sum(dim=1)
-            reached_mask = self.num_covered_targets >= self.max_target_count*self.n_targets
-            if reached_mask.any():
-                movement_penalty = torch.sum(agent.state.vel[reached_mask]**2, dim=-1) * -1.0
-                agent.oneshot_rew[reached_mask] = movement_penalty
-                agent.oneshot_signal[reached_mask] = 1.0
-
-        # 2) Heading
-        if self.global_heading_objective:
-            pos = agent.state.pos
-            squared_dist = torch.sum((self.search_coordinates - pos) ** 2, dim=-1)
-            reached_mask = squared_dist < self.location_radius**2
-            reward += -0.05 # Penalty for not being in the search region
-            if reached_mask.any():
-                reward[reached_mask] += 0.1 # Reward for being in the search region
-
-        return reward
-    
     #====================================================================================================================
     #====================================================================================================================
 
@@ -425,11 +381,7 @@ class MyScenario(BaseScenario):
             indices = torch.where(self.target_class == j)[0]
             for i, target in enumerate(targets):
                 # Keep track of all-time covered targets
-                self.all_time_covered_targets[indices] += self.covered_targets[indices,self.target_class[indices]]
-
-                # # If all targets have been covered, apply final reward
-                # if self.shared_final_reward and self.all_time_covered_targets.all():
-                #     self.shared_covering_rew += 5  # Final reward
+                self.all_time_covered_targets[indices] += self.covered_targets[indices]
 
                 # Move covered targets outside the environment
                 indices_selected = torch.where(self.covered_targets[indices,self.target_class[indices],i])[0]

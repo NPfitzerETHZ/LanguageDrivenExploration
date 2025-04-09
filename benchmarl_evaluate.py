@@ -82,7 +82,7 @@ if __name__ == "__main__":
             "comms_radius": comms_radius,
             "use_gnn": use_gnn,
             "n_obstacles": 20,
-            "global_heading_objective": True,
+            "global_heading_objective": False,
             "num_grid_cells": (l + c)**2,
             "x_semidim": h + i * 0.5,
             "y_semidim": h + i * 0.5,

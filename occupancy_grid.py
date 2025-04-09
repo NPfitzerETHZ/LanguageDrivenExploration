@@ -323,7 +323,7 @@ class OccupancyGrid:
 
 
 
-    def compute_exploration_bonus(self, agent_positions, exploration_rew_coeff = 0.02, new_cell_rew_coeff = 0.25):
+    def compute_exploration_bonus(self, agent_positions, exploration_rew_coeff = -0.02, new_cell_rew_coeff = 0.25):
         """
         Compute exploration reward: Reward for visiting new cells.
         """
@@ -334,7 +334,7 @@ class OccupancyGrid:
         #visits = self.grid_visited[torch.arange(agent_positions.shape[0]), grid_y, grid_x]
 
         # Works good, negative reward with short postive.
-        reward = - exploration_rew_coeff * visit_lvl + new_cell_bonus #  Sigmoid Penalty for staying in a visited cell + bonus for discovering a new cell
+        reward = exploration_rew_coeff * visit_lvl + new_cell_bonus #  Sigmoid Penalty for staying in a visited cell + bonus for discovering a new cell
 
         # Here I try postive reward only
         #reward = 0.05*(1/(1+torch.exp(visits - 3)))

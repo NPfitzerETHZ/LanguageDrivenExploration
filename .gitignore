@@ -24,3 +24,5 @@ mappo*
 
 experiments*
 wandb*
+data/
+decoders/
