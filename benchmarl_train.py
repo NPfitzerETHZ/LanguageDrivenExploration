@@ -61,8 +61,8 @@ task.config = {
         "n_obstacles": 10,
         "global_heading_objective": False,
         "num_grid_cells": 400,
-        "data_json_path": 'data/language_data_complete_single_target.json',
-        "decoder_model_path": 'decoders/llm0_decoder_model_grid_single_target.pth',
+        "data_json_path": 'data/language_data_complete_single_target_color.json',
+        "decoder_model_path": 'decoders/llm0_decoder_model_grid_single_target_color.pth',
         "use_decoder": True
 }
 
@@ -72,12 +72,12 @@ algorithm_config.entropy_coef = 0.00
 # Loads from "benchmarl/conf/model/layers/mlp.yaml"
 # model_config = MlpConfig.get_from_yaml()
 # model_config.num_cells = [256, 256, 256]
-model_config = MlpConfig(num_cells=[256,256],layer_class=nn.Linear,activation_class=nn.LeakyReLU)
+model_config = MlpConfig(num_cells=[256,256,256],layer_class=nn.Linear,activation_class=nn.LeakyReLU)
 #model_config.norm_class = nn.LayerNorm(normalized_shape=)
 #model_config.activation_class = nn.LeakyReLU()
 #critic_model_config = MlpConfig.get_from_yaml()
 #critic_model_config.num_cells = [256, 256, 256]
-critic_model_config = MlpConfig(num_cells=[256,256],layer_class=nn.Linear,activation_class=nn.LeakyReLU)
+critic_model_config = MlpConfig(num_cells=[256,256,256],layer_class=nn.Linear,activation_class=nn.LeakyReLU)
 
 if use_gnn:
     gnn_config = GnnConfig(

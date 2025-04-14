@@ -100,7 +100,9 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
 
         self.embeddings = torch.zeros((self.batch_size,EMBEDDING_SIZE),device=self.device)
         self.sentences = [[ "" for _ in range(self.num_targets) ] for _ in range(self.batch_size)]
-        self.use_embedding_ratio = 0.9
+        self.searching_hinted_target = torch.zeros((self.batch_size,), dtype=torch.bool, device=self.device)
+        self.use_embedding_ratio = 0.95
+        self.heading_lvl_threshold = 0.5
         
         self.target_attribute_embedding_found = False
         self.max_target_embedding_found = False
@@ -257,7 +259,6 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         
         return agent_centers, obstacle_centers, target_poses
          
-    
     def spawn_llm_map(
         self,
         env_index: torch.Tensor,
@@ -311,6 +312,9 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
                 mask = (target_class[env_index] == j).squeeze(1)
                 envs = env_index[mask]
                 
+                # Targets 
+                self.searching_hinted_target[envs] = True
+                
                 # Cancel mask: Environments which are not targetting class j or don't meet the valid heading threshold
                 declined_targets_mask = (~mask).clone()
                 
@@ -321,16 +325,17 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
                 if use_embedding and mask.any():
                     
                     # Get new target positions
-                    vec, no_ones = self.get_target_pose_in_heading(envs,envs.numel(),valid_heading_threshold=0.7)
+                    vec, no_ones = self.get_target_pose_in_heading(envs,envs.numel(),valid_heading_threshold=self.heading_lvl_threshold)
                     
                     # If the heading doesn't meet the validity threshold,
                     # we cancel the embedding and target (j,t) is placed randomly
                     if no_ones.any() > 0: 
                         declined_targets_mask[mask] += no_ones
-                        
                         unknown_target_dict[t] = declined_targets_mask
                         target_class[envs] = 0 # Default target when no embedding?
                         self.embeddings[envs[no_ones]].zero_()
+                        self.grid_heading[envs[no_ones]].zero_()
+                        self.searching_hinted_target[envs[no_ones]] = False
                         
                         for idx in envs[no_ones]:
                             self.sentences[idx] = ""
@@ -344,7 +349,7 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
                 else:
                     declined_targets_mask += mask # aka: all environments
                     unknown_target_dict[t] = declined_targets_mask 
-                    
+                     # Check this
             unknown_targets[j] = unknown_target_dict
                         
         # Generate random obstacles, agents (allways in a line somewhere) and unknown targets
@@ -357,7 +362,7 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
 
         grid_x, grid_y = self.world_to_grid(pos, padding=True)
 
-        in_heading_cell = (self.grid_heading[torch.arange(pos.shape[0]),grid_y,grid_x] > 0).float()
+        in_heading_cell = (self.grid_heading[torch.arange(pos.shape[0]),grid_y,grid_x] > self.heading_lvl_threshold).float()
         in_danger_cell = (self.grid_heading[torch.arange(pos.shape[0]),grid_y,grid_x] < 0).float()
         
         visit_lvl = self.grid_visits_sigmoid[torch.arange(pos.shape[0]), grid_y, grid_x]
@@ -372,12 +377,14 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
     def reset_all(self):
         self.sentences = [[ "" for _ in range(self.num_targets) ] for _ in range(self.batch_size)]
         self.embeddings.zero_()
+        self.searching_hinted_target.zero_()
         return super().reset_all()
     
     def reset_env(self, env_index):
         
         self.sentences[env_index] = [ "" for _ in range(self.num_targets) ]   
         self.embeddings[env_index].zero_()
+        self.searching_hinted_target[env_index].zero_()
         return super().reset_env(env_index)
             
 

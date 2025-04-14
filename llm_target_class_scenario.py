@@ -75,14 +75,14 @@ class MyLanguageScenario(MyScenario):
         self.agent_collision_penalty = kwargs.pop("agent_collision_penalty", 0.00)
         self.obstacle_collision_penalty = kwargs.pop("obstacle_collision_penalty", -0.75)
         self.covering_rew_coeff = kwargs.pop("covering_rew_coeff", 15.0) # Large reward for finding a target
-        self.false_covering_penalty_coeff = kwargs.pop("false_covering_penalty_coeff", -0.5) # Penalty for covering wrong target
+        self.false_covering_penalty_coeff = kwargs.pop("false_covering_penalty_coeff", -0.5) # Penalty for covering wrong target if hinted
         self.time_penalty = kwargs.pop("time_penalty", -0.05)
         self.terminal_rew_coeff = kwargs.pop("terminal_rew_coeff", 15.0)
         self.exponential_search_rew = kwargs.pop("exponential_search_rew_coeff", 0.75)
         self.oneshot_coeff = kwargs.pop("oneshot_coeff", -1.0)
         self.exploration_rew_coeff = kwargs.pop("exploration_rew_coeff", -0.02)
         self.new_cell_rew_coeff = kwargs.pop("new_cell_rew_coeff", 0.25)
-        self.heading_exploration_rew_coeff = kwargs.pop("heading_exploration_rew_coeff", 0.5)
+        self.heading_exploration_rew_coeff = kwargs.pop("heading_exploration_rew_coeff", 1.5)
 
         #===================
         # Language Driven Goals
@@ -449,9 +449,11 @@ class MyLanguageScenario(MyScenario):
 
         # Apply reward for the selected group and penalty for others
         group_rewards = (
-            num_covered_targets_covered_by_agent * self.covering_rew_val.unsqueeze(1) * reward_mask
-            + num_covered_targets_covered_by_agent * self.false_covering_penalty_coeff * (~reward_mask)
-        )  # (batch_size, target_groups)
+            num_covered_targets_covered_by_agent * self.covering_rew_val.unsqueeze(1) * reward_mask)
+        
+        if self.target_attribute_objective or self.llm_activate:
+            group_rewards += (num_covered_targets_covered_by_agent * self.false_covering_penalty_coeff * (~reward_mask) * self.occupancy_grid.searching_hinted_target.unsqueeze(1))
+          # (batch_size, target_groups)
 
         # Aggregate over target_groups to get (batch_size,)
         agent.covering_reward += group_rewards.sum(dim=-1)
@@ -500,7 +502,7 @@ class MyLanguageScenario(MyScenario):
                     head = heading_grid[j, i]
                     if self.global_heading_objective or self.llm_activate:
                         heading_lvl = head.item()
-                        if heading_lvl > 0.7:
+                        if heading_lvl > 0.5:
                             color = (self.target_colors[self.target_class[env_index]] * 0.9 * heading_lvl)
                             rect = rendering.FilledPolygon([(x, y), (x + grid.cell_size_x, y), 
                                                             (x + grid.cell_size_x, y + grid.cell_size_y), (x, y + grid.cell_size_y)])
