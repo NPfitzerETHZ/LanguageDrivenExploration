@@ -54,30 +54,30 @@ task = VmasTask.NAVIGATION.get_from_yaml()
 task.config = {
         "max_steps": 200,
         "n_agents": 3,
-        "n_targets_per_class": 1,
-        "n_target_classes": 11,
+        "n_targets_per_class": 3,
+        "n_target_classes": 3,
         "comms_radius": comms_radius,
         "use_gnn": use_gnn,
-        "n_obstacles": 10,
+        "n_obstacles": 0,
         "global_heading_objective": False,
         "num_grid_cells": 400,
-        "data_json_path": 'data/language_data_complete_single_target_color.json',
+        "data_json_path": 'data/language_data_complete_single_target_color_simple.json',
         "decoder_model_path": 'decoders/llm0_decoder_model_grid_single_target_color.pth',
-        "use_decoder": True
+        "use_decoder": False
 }
 
 # Loads from "benchmarl/conf/algorithm/mappo.yaml"
 algorithm_config = MappoConfig.get_from_yaml()
-algorithm_config.entropy_coef = 0.00
+algorithm_config.entropy_coef = 0.0001
 # Loads from "benchmarl/conf/model/layers/mlp.yaml"
 # model_config = MlpConfig.get_from_yaml()
 # model_config.num_cells = [256, 256, 256]
-model_config = MlpConfig(num_cells=[256,256,256],layer_class=nn.Linear,activation_class=nn.LeakyReLU)
+model_config = MlpConfig(num_cells=[256,256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
 #model_config.norm_class = nn.LayerNorm(normalized_shape=)
 #model_config.activation_class = nn.LeakyReLU()
 #critic_model_config = MlpConfig.get_from_yaml()
 #critic_model_config.num_cells = [256, 256, 256]
-critic_model_config = MlpConfig(num_cells=[256,256,256],layer_class=nn.Linear,activation_class=nn.LeakyReLU)
+critic_model_config = MlpConfig(num_cells=[256,256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
 
 if use_gnn:
     gnn_config = GnnConfig(
@@ -105,10 +105,10 @@ experiment_config.render = True
 experiment_config.evaluation = True
 experiment_config.share_policy_params = True # Policy parameter sharing on
 experiment_config.loggers = ["csv"]
-experiment_config.max_n_frames = 10_000_000 # Runs one iteration, change to 50_000_000 for full training
-experiment_config.evaluation_interval = 60_000
-experiment_config.on_policy_collected_frames_per_batch = 30_000
-experiment_config.on_policy_n_envs_per_worker = 1_000
+experiment_config.max_n_frames = 20_000_000 # Runs one iteration, change to 50_000_000 for full training
+experiment_config.evaluation_interval = 200_000
+experiment_config.on_policy_collected_frames_per_batch = 50_000
+experiment_config.on_policy_n_envs_per_worker = 250
 experiment_config.on_policy_minibatch_size = 4_000  # closer to RLlib’s 4096
 experiment_config.on_policy_n_minibatch_iters = 45
 

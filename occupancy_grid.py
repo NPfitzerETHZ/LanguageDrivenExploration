@@ -55,7 +55,6 @@ class OccupancyGrid:
         self.grid_targets = torch.zeros((batch_size,self.padded_grid_height, self.padded_grid_width), dtype=torch.int32, device=self.device)
         #grid headings
         self.grid_heading = torch.zeros((batch_size,self.padded_grid_height, self.padded_grid_width), device=self.device)
-        self.grid_gaussian_heading = torch.zeros((batch_size,self.num_targets,self.padded_grid_height, self.padded_grid_width), device=self.device)
 
         # Initialize the visit count grid (keeps track of visits per cell)
         self.grid_visits = torch.zeros((batch_size,self.padded_grid_height, self.padded_grid_width), device=self.device)
@@ -217,41 +216,9 @@ class OccupancyGrid:
 
         self.grid_heading[env_ids[update_indices].unsqueeze(1).unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)] = 0
     
-
-    def gaussian_heading(self, env_index, pos, heading_idx, sigma_x=2, sigma_y=2):
-        """
-        pos: (batch_size, 2)
-        env_index: (batch_size,)
-        """
-
-        batch_size = pos.shape[0]
-
-        # Create meshgrid once for all grid points
-        x_range = torch.arange(self.padded_grid_width, device=pos.device).float()
-        y_range = torch.arange(self.padded_grid_height, device=pos.device).float()
-        grid_x, grid_y = torch.meshgrid(y_range, x_range, indexing='xy')  # shape: (H, W)
-
-        grid_x = grid_x.unsqueeze(0)  # (1, W, H)
-        # Expand to batch size
-        grid_y = grid_y.unsqueeze(0)  # (1, W, H)
-
-        # pos_x = pos[:,0 ,0].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
-        # pos_y = pos[:,0 ,1].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
-        pos_x = pos[:,0].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
-        pos_y = pos[:,1].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
-
-        dist_x = ((grid_x - pos_x) / sigma_x) ** 2
-        dist_y = ((grid_y - pos_y) / sigma_y) ** 2
-
-        heading_val = (1 / (2 * torch.pi * sigma_x * sigma_y)) * torch.exp(-0.5 * (dist_x + dist_y))  # (B, W, H)
-        heading_val = heading_val / heading_val.view(batch_size, -1).max(dim=1)[0].view(-1, 1, 1)
-
-        # Update grid_heading only if the new value is higher
-        for i in range(batch_size):
-            self.grid_gaussian_heading[env_index[i],heading_idx] = heading_val[i]
-            self.grid_heading[env_index[i]] = torch.max(self.grid_heading[env_index[i]], heading_val[i])
     
-    def update_gaussian_heading(self, all_time_covered_targets: torch.Tensor):
+    # For a multi-target scenario....
+    def update_multi_target_gaussian_heading(self, all_time_covered_targets: torch.Tensor):
 
         # All found heading coordinates are set to a out of bounds value (not sure this will work)
 

@@ -26,7 +26,7 @@ color_dict = {
     "magenta":  {"rgb": [1.0, 0.0, 1.0], "index": 5},
     "orange":   {"rgb": [1.0, 0.5, 0.0], "index": 6},
     "purple":   {"rgb": [0.5, 0.0, 0.5], "index": 7},
-    "pink":     {"rgb": [1.0, 0.75, 0.8], "index": 8},
+    "pink":     {"rgb": [1.0, 0.75, 0.8],"index": 8},
     "brown":    {"rgb": [0.6, 0.4, 0.2], "index": 9},
     "gray":     {"rgb": [0.5, 0.5, 0.5], "index": 10}
 }
@@ -73,16 +73,16 @@ class MyLanguageScenario(MyScenario):
         self.use_expo_search_rew = kwargs.pop("use_expo_search_rew", True)
 
         self.agent_collision_penalty = kwargs.pop("agent_collision_penalty", 0.00)
-        self.obstacle_collision_penalty = kwargs.pop("obstacle_collision_penalty", -0.75)
-        self.covering_rew_coeff = kwargs.pop("covering_rew_coeff", 15.0) # Large reward for finding a target
-        self.false_covering_penalty_coeff = kwargs.pop("false_covering_penalty_coeff", -0.5) # Penalty for covering wrong target if hinted
-        self.time_penalty = kwargs.pop("time_penalty", -0.05)
-        self.terminal_rew_coeff = kwargs.pop("terminal_rew_coeff", 15.0)
-        self.exponential_search_rew = kwargs.pop("exponential_search_rew_coeff", 0.75)
-        self.oneshot_coeff = kwargs.pop("oneshot_coeff", -1.0)
-        self.exploration_rew_coeff = kwargs.pop("exploration_rew_coeff", -0.02)
-        self.new_cell_rew_coeff = kwargs.pop("new_cell_rew_coeff", 0.25)
-        self.heading_exploration_rew_coeff = kwargs.pop("heading_exploration_rew_coeff", 1.5)
+        self.obstacle_collision_penalty = kwargs.pop("obstacle_collision_penalty", -0.5)
+        self.covering_rew_coeff = kwargs.pop("covering_rew_coeff", 7.0) # Large reward for finding a target
+        self.false_covering_penalty_coeff = kwargs.pop("false_covering_penalty_coeff", 0.0) # Penalty for covering wrong target if hinted
+        self.time_penalty = kwargs.pop("time_penalty", -0.01)
+        self.terminal_rew_coeff = kwargs.pop("terminal_rew_coeff", 15.0) # Large reward for finding all targets
+        self.exponential_search_rew = kwargs.pop("exponential_search_rew_coeff", 0.35)
+        self.oneshot_coeff = kwargs.pop("oneshot_coeff", -0.5)
+        self.exploration_rew_coeff = kwargs.pop("exploration_rew_coeff", -0.01)
+        self.new_cell_rew_coeff = kwargs.pop("new_cell_rew_coeff", 0.125)
+        self.heading_exploration_rew_coeff = kwargs.pop("heading_exploration_rew_coeff", 0.5)
 
         #===================
         # Language Driven Goals
@@ -108,7 +108,7 @@ class MyLanguageScenario(MyScenario):
         self.n_obstacles = kwargs.pop("n_obstacles", 10)
         self.observe_grid = kwargs.pop("observe_grid",True)
         self.num_grid_cells = kwargs.pop("num_grid_cells", 400) # Must be n^2 with n = width 
-        self.mini_grid_radius = 2
+        self.mini_grid_radius = 1
 
         self.plot_grid = True
         self.visualize_semidims = False
@@ -129,6 +129,7 @@ class MyLanguageScenario(MyScenario):
             y_dim=self.y_semidim*2,
             num_cells=self.num_grid_cells,
             num_targets=self.n_targets,
+            num_targets_per_class=self.n_targets_per_class,
             heading_mini_grid_radius=self.mini_grid_radius*2,
             device=self.device)
         self._covering_range = self.occupancy_grid.cell_radius
@@ -172,6 +173,8 @@ class MyLanguageScenario(MyScenario):
         for target_class_idx in range(self.n_target_classes):
             rgb = next(v["rgb"] for v in color_dict.values() if v["index"] == target_class_idx)
             self.target_colors[target_class_idx] = torch.tensor(rgb, device=self.device)
+        
+        self.step_count = 0
     
     def reset_world_at(self, env_index = None):
         """Reset the world for a given environment index."""
@@ -292,8 +295,8 @@ class MyLanguageScenario(MyScenario):
         
         # Reward for finding unexplored cells or a heading cell
         if self.use_occupancy_grid_rew:
-            if self.global_heading_objective or self.llm_activate:
-                exploration_rew += self.occupancy_grid.compute_heading_bonus(pos, heading_exploration_rew_coeff=self.heading_exploration_rew_coeff)
+            if False and (self.global_heading_objective or self.llm_activate):
+                exploration_rew += self.occupancy_grid.compute_gaussian_heading_bonus(pos, heading_exploration_rew_coeff=self.heading_exploration_rew_coeff)
             exploration_rew += self.occupancy_grid.compute_exploration_bonus(pos, exploration_rew_coeff=self.exploration_rew_coeff, new_cell_rew_coeff=self.new_cell_rew_coeff)
             self.occupancy_grid.update(pos)
         
@@ -307,8 +310,8 @@ class MyLanguageScenario(MyScenario):
         if is_first:
             
             # Check if a heading is found, update accordingly
-            if self.global_heading_objective:
-                self.occupancy_grid.update_gaussian_heading(self.all_time_covered_targets)
+            if self.global_heading_objective or self.llm_activate:
+                self.occupancy_grid.update_multi_target_gaussian_heading(self.all_time_covered_targets,self.target_class)
             
             # Collision Penalty
             self._compute_agent_distance_matrix()
@@ -345,8 +348,8 @@ class MyLanguageScenario(MyScenario):
                 lidar_measures.append(sensor.measure())
             lidar_measures = torch.cat(lidar_measures,dim=-1)
 
-        # Collect position and velocity and get history if enabled
-        pos, vel = agent.state.pos, agent.state.vel
+        # Collect normalized position and velocity and get history if enabled
+        pos, vel = agent.state.pos / torch.tensor([self.x_semidim, self.y_semidim], device=self.device), agent.state.vel
         pos_hist = agent.position_history.get_flattened() if self.observe_pos_history else None
         vel_hist = agent.velocity_history.get_flattened() if self.observe_vel_history else None
 
@@ -363,11 +366,11 @@ class MyLanguageScenario(MyScenario):
             agent.velocity_history.update(vel)
             
         # Targeted attribute  
-        if self.target_attribute_objective or not self.occupancy_grid.target_attribute_embedding_found:
+        if self.target_attribute_objective: # or not self.occupancy_grid.target_attribute_embedding_found:
             obs_components.append(self.target_class.unsqueeze(1))
             
         # Max number of targets and Current count (maybe there's a better way for this)
-        if self.max_target_objective or not self.occupancy_grid.max_target_embedding_found:
+        if self.max_target_objective: # or not self.occupancy_grid.max_target_embedding_found:
             obs_components.append(self.max_target_count.unsqueeze(1))
             obs_components.append(self.num_covered_targets.unsqueeze(1))
         
@@ -459,6 +462,14 @@ class MyLanguageScenario(MyScenario):
         agent.covering_reward += group_rewards.sum(dim=-1)
         return agent.covering_reward
     
+    def pre_step(self):
+
+        self.step_count += 1
+        # Curriculum
+        # 1) Once agents have learned that reaching a target can lead to reward, increase penalty for hitting wrong target.
+        if self.step_count % (50 * 200) == 0: # Check this
+            self.false_covering_penalty_coeff -= 0.25
+    
     def extra_render(self, env_index: int = 0) -> "List[Geom]":
         """Render additional visual elements."""
         from vmas.simulator import rendering
@@ -500,10 +511,10 @@ class MyLanguageScenario(MyScenario):
 
                     # Heading
                     head = heading_grid[j, i]
-                    if self.global_heading_objective or self.llm_activate:
+                    if False and (self.global_heading_objective or self.llm_activate):
                         heading_lvl = head.item()
-                        if heading_lvl > 0.5:
-                            color = (self.target_colors[self.target_class[env_index]] * 0.9 * heading_lvl)
+                        if heading_lvl >= 0.:
+                            color = (self.target_colors[self.target_class[env_index]] * 0.8 * heading_lvl)
                             rect = rendering.FilledPolygon([(x, y), (x + grid.cell_size_x, y), 
                                                             (x + grid.cell_size_x, y + grid.cell_size_y), (x, y + grid.cell_size_y)])
                             rect.set_color(*color)
