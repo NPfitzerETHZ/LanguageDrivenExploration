@@ -18,7 +18,7 @@ from typing import Callable, Optional
 from benchmarl.environments import VmasTask
 from benchmarl.utils import DEVICE_TYPING
 from torchrl.envs import EnvBase, VmasEnv  
-from grid_maps import MyGridMapScenario
+from scenarios.old.grid_maps import MyGridMapScenario
 from llm_heading_scenario import MyLanguageScenario
 
 from benchmarl.models import GnnConfig, SequenceModelConfig

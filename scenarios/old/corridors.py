@@ -11,7 +11,7 @@ from vmas.simulator.utils import Color
 if typing.TYPE_CHECKING:
     from vmas.simulator.rendering import Geom
 
-from myscenario import MyScenario
+from scenarios.myscenario import MyScenario
 
 class MyCorridorScenario(MyScenario):
 

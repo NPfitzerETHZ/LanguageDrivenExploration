@@ -1,0 +1,35 @@
+seed: 0
+env:
+  max_steps: 200
+  scenario_name: balance
+  scenario:
+    n_agents: 3
+  device: ???
+  vmas_envs: ???
+model:
+  shared_parameters: true
+  centralised_critic: true
+collector:
+  frames_per_batch: 60000
+  n_iters: 500
+  total_frames: ???
+buffer:
+  memory_size: ???
+loss:
+  gamma: 0.9
+  lmbda: 0.9
+  entropy_eps: 0
+  clip_epsilon: 0.2
+train:
+  num_epochs: 45
+  minibatch_size: 4096
+  lr: 5.0e-05
+  max_grad_norm: 40.0
+  device: ???
+eval:
+  evaluation_interval: 20
+  evaluation_episodes: 200
+logger:
+  backend: wandb
+  project_name: null
+  group_name: null
