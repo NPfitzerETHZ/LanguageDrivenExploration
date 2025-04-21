@@ -1,5 +1,5 @@
 import torch
-from occupancy_grid import OccupancyGrid, OBSTACLE, VISITED, TARGET
+from scenarios.scripts.occupancy_grid import OccupancyGrid, OBSTACLE, VISITED, TARGET
 
 class SpatialDiffusionOccupancyGrid(OccupancyGrid):  # Updated class name
     def __init__(self, x_dim, y_dim, num_cells, batch_size, num_headings=0, mini_grid_dim=3, device='cpu'):

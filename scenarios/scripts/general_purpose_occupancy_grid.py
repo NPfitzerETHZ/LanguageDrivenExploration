@@ -2,7 +2,7 @@ import random
 import torch
 import numpy as np
 import json
-from occupancy_grid import OccupancyGrid, TARGET, OBSTACLE, VISITED_TARGET, VISITED
+from scenarios.scripts.occupancy_grid import OccupancyGrid, TARGET, OBSTACLE, VISITED_TARGET, VISITED
 from vmas.simulator.core import Landmark
 import torch.nn as nn
 import torch.nn.functional as F
@@ -44,10 +44,14 @@ def load_decoder(model_path, device):
     decoder_model.eval()
     
 def load_task_data(json_path, use_decoder, device='cpu'):
-
     global train_dict
     global total_dict_size
-    with open(json_path, 'r') as f:
+
+    # Resolve path to ensure it's absolute and correct regardless of cwd
+    project_root = Path(__file__).resolve().parents[2]  # Adjust depending on depth of current file
+    full_path = project_root / json_path
+
+    with full_path.open('r') as f:
         data = [json.loads(line) for line in f]
 
     np.random.shuffle(data)
@@ -381,8 +385,8 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         visit_lvl = self.grid_visits_sigmoid[torch.arange(pos.shape[0]), grid_y, grid_x]
         new_cell_bonus = (visit_lvl < 0.2).float() * heading_exploration_rew_coeff
         
-        #return new_cell_bonus * heading_val
-        return heading_val * heading_exploration_rew_coeff  # Open question: Should the heading bonus degrade after visiting the cell or not? 
+        return new_cell_bonus * heading_val
+        #return heading_val * heading_exploration_rew_coeff  # Open question: Should the heading bonus degrade after visiting the cell or not? 
     
     def observe_embeddings(self):
 

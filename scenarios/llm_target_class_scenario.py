@@ -12,10 +12,10 @@ from vmas.simulator.utils import Color, ScenarioUtils
 if typing.TYPE_CHECKING:
     from vmas.simulator.rendering import Geom
 
-from myscenario import MyScenario
-from dead_end import DeadEndOccupancyGrid
-from heading import HeadingOccupancyGrid
-from general_purpose_occupancy_grid import GeneralPurposeOccupancyGrid, load_task_data, load_decoder
+from scenarios.myscenario import MyScenario
+from scenarios.old.dead_end import DeadEndOccupancyGrid
+from scenarios.scripts.heading import HeadingOccupancyGrid
+from scenarios.scripts.general_purpose_occupancy_grid import GeneralPurposeOccupancyGrid, load_task_data, load_decoder
 
 color_dict = {
     "red":      {"rgb": [1.0, 0.0, 0.0], "index": 0},
@@ -121,8 +121,8 @@ class MyLanguageScenario(MyScenario):
     def _create_occupancy_grid(self, batch_dim):
         
         # Initialize Important Stuff
-        load_decoder(self.decoder_model_path, self.device)
-        load_task_data(self.data_json_path, self.use_decoder, self.device)
+        if self.use_decoder: load_decoder(self.decoder_model_path, self.device)
+        if self.llm_activate: load_task_data(self.data_json_path, self.use_decoder, self.device)
         self.occupancy_grid = GeneralPurposeOccupancyGrid(
             batch_size=batch_dim,
             x_dim=self.x_semidim*2,
@@ -295,7 +295,7 @@ class MyLanguageScenario(MyScenario):
         
         # Reward for finding unexplored cells or a heading cell
         if self.use_occupancy_grid_rew:
-            if False and (self.global_heading_objective or self.llm_activate):
+            if (self.global_heading_objective or self.llm_activate):
                 exploration_rew += self.occupancy_grid.compute_gaussian_heading_bonus(pos, heading_exploration_rew_coeff=self.heading_exploration_rew_coeff)
             exploration_rew += self.occupancy_grid.compute_exploration_bonus(pos, exploration_rew_coeff=self.exploration_rew_coeff, new_cell_rew_coeff=self.new_cell_rew_coeff)
             self.occupancy_grid.update(pos)
@@ -355,6 +355,12 @@ class MyLanguageScenario(MyScenario):
 
         # Collect all observation components
         obs_components = []
+        
+        # Sentence Embedding Observation
+        if self.llm_activate:
+            obs_components.append(self.occupancy_grid.observe_embeddings())
+            
+        # Targets
         obs_components.append(self.occupancy_grid.get_grid_target_observation(pos,self.mini_grid_radius))
         
         # Histories
@@ -377,10 +383,6 @@ class MyLanguageScenario(MyScenario):
         # Heading Observation    
         if self.global_heading_objective:
             obs_components.append(self.occupancy_grid.get_heading_distance_observation(pos))
-        
-        # Sentence Embedding Observation
-        if self.llm_activate:
-            obs_components.append(self.occupancy_grid.observe_embeddings())
             
         # Grid Observation (Check out observation_grid.py/heading.py for different options)
         if self.use_occupancy_grid_rew:
@@ -467,7 +469,7 @@ class MyLanguageScenario(MyScenario):
         self.step_count += 1
         # Curriculum
         # 1) Once agents have learned that reaching a target can lead to reward, increase penalty for hitting wrong target.
-        if self.step_count % (50 * 200) == 0: # Check this
+        if self.step_count % (50 * 200) == 0 and self.false_covering_penalty_coeff > -0.75: # Check this
             self.false_covering_penalty_coeff -= 0.25
     
     def extra_render(self, env_index: int = 0) -> "List[Geom]":
@@ -511,7 +513,7 @@ class MyLanguageScenario(MyScenario):
 
                     # Heading
                     head = heading_grid[j, i]
-                    if False and (self.global_heading_objective or self.llm_activate):
+                    if (self.global_heading_objective or self.llm_activate):
                         heading_lvl = head.item()
                         if heading_lvl >= 0.:
                             color = (self.target_colors[self.target_class[env_index]] * 0.8 * heading_lvl)

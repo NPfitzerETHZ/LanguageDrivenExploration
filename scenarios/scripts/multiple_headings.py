@@ -2,7 +2,7 @@ import random
 import torch
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from occupancy_grid import OccupancyGrid, TARGET, OBSTACLE, VISITED_TARGET, VISITED
+from scenarios.scripts.occupancy_grid import OccupancyGrid, TARGET, OBSTACLE, VISITED_TARGET, VISITED
 import torch.nn as nn
 
 from pathlib import Path

@@ -19,9 +19,9 @@ from ray.air.callbacks.wandb import WandbLoggerCallback
 
 #from vmas import make_env
 from vmas.simulator.environment import Wrapper
-from exploration import MyScenario
-from corridors import MyCorridorScenario
-from grid_maps import MyGridMapScenario
+from scenarios.exploration import MyScenario
+from scenarios.old.corridors import MyCorridorScenario
+from scenarios.old.grid_maps import MyGridMapScenario
 from llm_heading_scenario import MyLanguageScenario
 #from llm_heading_scenario import MyLanguageScenario
 
