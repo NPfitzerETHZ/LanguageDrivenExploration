@@ -2,7 +2,7 @@ import random
 import torch
 import numpy as np
 import json
-from scenarios.scripts.occupancy_grid import OccupancyGrid, TARGET, OBSTACLE, VISITED_TARGET, VISITED
+from scenarios.scripts.occupancy_grid import OccupancyGrid, TARGET, OBSTACLE, VISITED
 from vmas.simulator.core import Landmark
 import torch.nn as nn
 import torch.nn.functional as F
@@ -43,7 +43,13 @@ def load_decoder(model_path, device):
     decoder_model.load_state_dict(torch.load(model_path, map_location=device))
     decoder_model.eval()
     
-def load_task_data(json_path, use_decoder, device='cpu'):
+def load_task_data(
+    json_path,
+    use_decoder,
+    use_grid_data,
+    use_class_data,
+    use_max_targets_data,
+    device='cpu'):
     global train_dict
     global total_dict_size
 
@@ -67,20 +73,20 @@ def load_task_data(json_path, use_decoder, device='cpu'):
             sentences = [entry["gemini_response"] for entry in dataset]
             output["sentence"] = sentences
 
-        if all("grid" in entry for entry in dataset) and not use_decoder:
+        if all("grid" in entry for entry in dataset) and not use_decoder and use_grid_data:
             grids = [[*entry["grid"]] for entry in dataset]
             output["grid"] = torch.tensor(grids, dtype=torch.float32, device=device)
         else:
             grids = [decoder_model(torch.tensor(entry["embedding"],device=device)) for entry in dataset]
             output["grid"] = torch.stack(grids)
 
-        if all("class" in entry for entry in dataset):
+        if all("class" in entry for entry in dataset) and use_class_data:
             classes = [entry["class"] for entry in dataset]
             output["class"] = torch.tensor(classes, dtype=torch.float32, device=device)
         else:
             print("Target Class wasn't found in the dataset so reverting back to default classes")
 
-        if all("max_targets" in entry for entry in dataset):
+        if all("max_targets" in entry for entry in dataset) and use_max_targets_data:
             max_targets = [entry["max_targets"] for entry in dataset]
             output["max_targets"] = torch.tensor(max_targets, dtype=torch.float32, device=device)
         else:
@@ -94,7 +100,7 @@ def load_task_data(json_path, use_decoder, device='cpu'):
 
 MINI_GRID_RADIUS = 1
 EMBEDDING_SIZE = 1024
-DATA_GRID_SHAPE = (5,5)
+DATA_GRID_SHAPE = (10,10)
 DATA_GRID_NUM_TARGET_PATCHES = 1
 
 class GeneralPurposeOccupancyGrid(OccupancyGrid):
@@ -122,14 +128,15 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         # Sample tensors
         task_dict = {key: value[sample_indices] for key, value in train_dict.items() if key in train_dict and key != "sentence"}
         # Sample sentences
-        task_dict["sentence"] = [sentence for sentence in train_dict["sentence"]]
+        indices_list = sample_indices.tolist()
+        task_dict["sentence"] = [train_dict["sentence"][i] for i in indices_list]
 
         if "task_embedding" in task_dict:
             self.embeddings[env_index] = task_dict["task_embedding"].unsqueeze(1)
         
         if "sentence" in task_dict:
-            for idx in env_index:
-                self.sentences[idx] = task_dict["sentence"][idx]
+            for i , idx in enumerate(env_index):
+                self.sentences[idx] = task_dict["sentence"][i]
 
         if "class" in task_dict:
             target_class[env_index] = task_dict["class"].unsqueeze(1).int() 
@@ -138,10 +145,10 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
             target_class[env_index] = torch.zeros((packet_size,1), dtype=torch.int, device=self.device)
 
         if "max_targets" in task_dict:
-            max_target_count[env_index] = task_dict["max_targets"]
+            max_target_count[env_index] = task_dict["max_targets"].unsqueeze(1).int() 
             self.max_target_embedding_found = True
         else:
-            max_target_count[env_index] = self.num_targets # This will change
+            max_target_count[env_index] = self.num_targets_per_class + 1 # never stop looking
 
         if "grid" in task_dict:
             new_grids_scaled = F.interpolate(
@@ -161,6 +168,8 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
                 mode='constant',
                 value=0
             )
+            # Flip vertically to match bottom-left origin
+            new_grids_scaled = torch.flip(new_grids_scaled, dims=[2])
             self.grid_heading[env_index] = new_grids_scaled
 
     def get_target_pose_in_heading(
@@ -246,9 +255,11 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
           
         t = 0
         for j, mask in unknown_targets.items():
-            target_poses[mask,j,:] = target_center[mask,t:t+3]
-            self.grid_targets[env_index[mask].unsqueeze(1), target_grid_y[t:t+3]+pad, target_grid_x[t:t+3]+pad] = (TARGET + j)
-            t += 3
+            target_poses[mask,j,:] = target_center[mask,t:t+self.num_targets_per_class]
+            self.grid_targets[env_index[mask], target_grid_y[mask,t:t+self.num_targets_per_class]+pad, target_grid_x[mask,t:t+self.num_targets_per_class]+pad] = (TARGET + j)
+            self.grid_visited[env_index[mask], target_grid_y[mask,t:t+self.num_targets_per_class]+pad, target_grid_x[mask,t:t+self.num_targets_per_class]+pad] = VISITED
+            self.grid_visits_sigmoid[env_index[mask], target_grid_y[mask,t:t+self.num_targets_per_class]+pad, target_grid_x[mask,t:t+self.num_targets_per_class]+pad] = 1.0
+            t += self.num_targets_per_class
         
         return agent_centers, obstacle_centers, target_poses
          
@@ -260,6 +271,7 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         target_groups: List[List[Landmark]],
         target_class: torch.Tensor,
         max_target_count: torch.Tensor,
+        heading_sigma: float,
         padding = True):
         
         """ This function handles the scenario reset. It is unbelievably complicated."""
@@ -297,26 +309,31 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         
         # Cycle through each target and assign new positions
         for j in range(num_target_groups):
-            
             mask = (target_class[env_index] == j).squeeze(1)
-            envs = env_index[mask]
             
-            # Targets 
-            self.searching_hinted_target[envs] = True
-            # Cancel mask: Environments which are not targetting class j or don't meet the valid heading threshold
-            declined_targets_mask = (~mask).clone()
-            unknown_targets[j] = declined_targets_mask
-    
-            if use_embedding and mask.any():
-                for t in range(num_targets_per_class):
-                    # Get new target positions
-                    vec = self.get_target_pose_in_heading(envs,envs.numel())
-                    # Place the target in the grid
-                    self.grid_targets[envs, vec[:,1].unsqueeze(1).int(), vec[:,0].unsqueeze(1).int()] = (TARGET + j) 
-                    # Compute Gaussian Heading
-                    self.gaussian_heading(envs,t,vec)
-                    # Store world position
-                    target_poses[mask,j,t] = self.grid_to_world(vec[:,0]-pad, vec[:,1]-pad)
+            if False and (use_embedding):
+                envs = env_index[mask]
+                
+                # Targets 
+                self.searching_hinted_target[envs] = True
+                # Cancel mask: Environments which are not targetting class j or don't meet the valid heading threshold
+                declined_targets_mask = (~mask).clone()
+                unknown_targets[j] = declined_targets_mask
+        
+                if mask.any():
+                    for t in range(num_targets_per_class):
+                        # Get new target positions
+                        vec = self.get_target_pose_in_heading(envs,envs.numel())
+                        # Place the target in the grid (and mark as visited, this a test)
+                        self.grid_targets[envs, vec[:,1].unsqueeze(1).int(), vec[:,0].unsqueeze(1).int()] = (TARGET + j)
+                        self.grid_visited[envs, vec[:,1].unsqueeze(1).int(), vec[:,0].unsqueeze(1).int()] = VISITED
+                        self.grid_visits_sigmoid[envs, vec[:,1].unsqueeze(1).int(), vec[:,0].unsqueeze(1).int()] = 1.0
+                        # Compute Gaussian Heading
+                        self.gaussian_heading(envs,t,vec,heading_sigma)
+                        # Store world position
+                        target_poses[mask,j,t] = self.grid_to_world(vec[:,0]-pad, vec[:,1]-pad)
+            else:
+                unknown_targets[j] = mask
 
                         
         # Generate random obstacles, agents (allways in a line somewhere) and unknown targets
@@ -325,7 +342,7 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         return obstacle_centers.squeeze(-2), agent_centers.squeeze(-2), target_poses
     
     
-    def gaussian_heading(self, env_index, t_index, pos, sigma_x=3, sigma_y=3):
+    def gaussian_heading(self, env_index, t_index, pos, sigma=2.0):
         """
         pos: (batch_size, 2)
         env_index: (batch_size,)
@@ -347,10 +364,10 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         pos_x = pos[:,0].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
         pos_y = pos[:,1].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
 
-        dist_x = ((grid_x - pos_x) / sigma_x) ** 2
-        dist_y = ((grid_y - pos_y) / sigma_y) ** 2
+        dist_x = ((grid_x - pos_x) / sigma) ** 2
+        dist_y = ((grid_y - pos_y) / sigma) ** 2
 
-        heading_val = (1 / (2 * torch.pi * sigma_x * sigma_y)) * torch.exp(-0.5 * (dist_x + dist_y))  # (B, W, H)
+        heading_val = (1 / (2 * torch.pi * sigma * sigma)) * torch.exp(-0.5 * (dist_x + dist_y))  # (B, W, H)
         heading_val = heading_val / heading_val.view(batch_size, -1).max(dim=1)[0].view(-1, 1, 1)
 
         # Update grid_heading only if the new value is higher
@@ -396,6 +413,7 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         self.sentences = [ ""  for _ in range(self.batch_size)]
         self.embeddings.zero_()
         self.searching_hinted_target.zero_()
+        self.grid_gaussian_heading.zero_()
         return super().reset_all()
     
     def reset_env(self, env_index):
@@ -403,6 +421,7 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         self.sentences[env_index] = ""
         self.embeddings[env_index].zero_()
         self.searching_hinted_target[env_index].zero_()
+        self.grid_gaussian_heading[env_index].zero_()
         return super().reset_env(env_index)
             
 

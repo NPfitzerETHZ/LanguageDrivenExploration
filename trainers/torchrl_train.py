@@ -54,19 +54,31 @@ def train(cfg: DictConfig):  # noqa: F821
     use_gnn = False
     embedding_size = 1024
     encoder_depth = 2
-    latent_dim = 16
+    latent_dim = 64
+    mini_grid_radius = 1
+    n_target_classes = 5
     kwargs = {
         "n_agents": 3,
         "n_targets_per_class": 3,
-        "n_target_classes": 3,
+        "n_target_classes": n_target_classes,
         "comms_radius": comms_radius,
         "use_gnn": use_gnn,
         "n_obstacles": 0,
         "global_heading_objective": False,
         "num_grid_cells": 400,
-        "data_json_path": 'data/language_data_complete_single_target_color_simple.json',
+        "data_json_path": 'data/language_data_complete_single_target_color_medium.json',
         "decoder_model_path": 'decoders/llm0_decoder_model_grid_single_target_color.pth',
-        "use_decoder": False
+        "use_decoder": False,
+        "use_grid_data": True,
+        "use_class_data": False,
+        "use_max_targets": True,
+        "mini_grid_radius": mini_grid_radius
+    }
+    
+    # Task config
+    task_config = {
+        "heading": 2,
+        "class": 2
     }
 
     # Create env and env_test
@@ -109,8 +121,11 @@ def train(cfg: DictConfig):  # noqa: F821
             num_cells=256,
             activation_class=nn.Tanh,
             embedding_size=embedding_size,
+            local_grid_dim=(2*mini_grid_radius+1)**2,
+            target_classes=n_target_classes+1,
             encoder_depth=encoder_depth,
-            latent_dim=latent_dim
+            latent_dim=latent_dim,
+            task_dict=task_config
         ),
         NormalParamExtractor(),
     )
@@ -144,8 +159,11 @@ def train(cfg: DictConfig):  # noqa: F821
         num_cells=256,
         activation_class=nn.Tanh,
         embedding_size=embedding_size,
+        local_grid_dim=(2*mini_grid_radius+1)**2,
+        target_classes=n_target_classes+1,
         encoder_depth=encoder_depth,
-        latent_dim=latent_dim
+        latent_dim=latent_dim,
+        task_dict=task_config
     )
     value_module = ValueOperator(
         module=module,

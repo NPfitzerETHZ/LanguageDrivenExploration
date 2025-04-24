@@ -4,10 +4,13 @@ import torch.nn as nn
 from typing import Callable, Optional
 from benchmarl.environments import VmasTask
 from benchmarl.utils import DEVICE_TYPING
-from torchrl.envs import EnvBase, VmasEnv  
-from scenarios.old.grid_maps import MyGridMapScenario
+from torchrl.envs import EnvBase, VmasEnv
+import sys 
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))) 
+#from scenarios.old.grid_maps import MyGridMapScenario
 #from llm_heading_scenario import MyLanguageScenario
-from scenarios.llm_target_class_scenario import MyLanguageScenario
+from scenarios.llm_target_class_and_max_scenario import MyLanguageScenario
 
 from benchmarl.models import GnnConfig, SequenceModelConfig
 import torch_geometric
@@ -54,16 +57,19 @@ task = VmasTask.NAVIGATION.get_from_yaml()
 task.config = {
         "max_steps": 200,
         "n_agents": 3,
-        "n_targets_per_class": 3,
-        "n_target_classes": 3,
+        "n_targets_per_class": 4,
+        "n_target_classes": 1,
         "comms_radius": comms_radius,
         "use_gnn": use_gnn,
         "n_obstacles": 0,
         "global_heading_objective": False,
         "num_grid_cells": 400,
-        "data_json_path": 'data/language_data_complete_single_target_color_simple.json',
+        "data_json_path": 'data/language_data_complete_multi_target_color_medium.json',
         "decoder_model_path": 'decoders/llm0_decoder_model_grid_single_target_color.pth',
-        "use_decoder": False
+        "use_decoder": False,
+        "use_grid_data": True,
+        "use_class_data": False,
+        "use_max_targets": True,
 }
 
 # Loads from "benchmarl/conf/algorithm/mappo.yaml"

@@ -9,7 +9,7 @@ Y = 1
 AGENT=0
 VISITED=1
 OBSTACLE=2
-TARGET=3
+TARGET=1
 VISITED_TARGET= -1
 
 
@@ -345,7 +345,6 @@ class OccupancyGrid:
 
         self.grid_targets.zero_()
         self.grid_heading.zero_()
-        self.grid_gaussian_heading.zero_()
         self.headings.zero_()
     
         self.grid_obstacles.zero_()
@@ -361,7 +360,6 @@ class OccupancyGrid:
 
         self.grid_targets[env_index].zero_()
         self.grid_heading[env_index].zero_()
-        self.grid_gaussian_heading[env_index].zero_()
         self.headings[env_index].zero_()
 
         self.grid_obstacles[env_index].zero_()
