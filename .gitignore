@@ -26,3 +26,4 @@ experiments*
 wandb*
 data/
 decoders/
+outputs*

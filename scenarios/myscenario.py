@@ -121,7 +121,7 @@ class MyScenario(BaseScenario):
             sensors.append(Lidar(world, n_rays=self.n_lidar_rays_entities, max_range=self._lidar_range, entity_filter=lambda e: e.name.startswith("secondary_target"), render_color=Color.LIGHT_GREEN))
         return sensors
 
-    def _initialize_agent_rewards(self, agent, batch_dim):
+    def _initialize_agent_rewards(self, agent: Agent, batch_dim):
         """Initialize rewards for an agent."""
         agent.collision_rew = torch.zeros(batch_dim, device=self.device)
         agent.covering_reward = agent.collision_rew.clone()

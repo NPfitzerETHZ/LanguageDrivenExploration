@@ -37,7 +37,7 @@ class VelocityHistory:
         """
         return self.history.reshape(self.history.shape[0], -1)
     
-    def reset(self):
+    def reset_all(self):
         """Resets the velocity history to zeros."""
         self.history.zero_()
     
@@ -83,7 +83,7 @@ class PositionHistory:
         """
         return self.history.reshape(self.history.shape[0], -1)
     
-    def reset(self):
+    def reset_all(self):
         """Resets the position history to zeros."""
         self.history.zero_()
 
