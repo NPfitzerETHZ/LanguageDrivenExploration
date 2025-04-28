@@ -95,7 +95,7 @@ class MyLanguageScenario(MyScenario):
         self.false_covering_penalty_coeff = kwargs.pop("false_covering_penalty_coeff", -0.25) # Penalty for covering wrong target if hinted
         self.time_penalty = kwargs.pop("time_penalty", -0.01)
         self.terminal_rew_coeff = kwargs.pop("terminal_rew_coeff", 15.0) # Large reward for finding max_targets
-        self.exponential_search_rew = kwargs.pop("exponential_search_rew_coeff", 0.35)
+        self.exponential_search_rew = kwargs.pop("exponential_search_rew_coeff", 1.5)
         self.oneshot_coeff = kwargs.pop("oneshot_coeff", -10.0)
         self.exploration_rew_coeff = kwargs.pop("exploration_rew_coeff", -0.01)
         self.new_cell_rew_coeff = kwargs.pop("new_cell_rew_coeff", 0.125)
@@ -208,9 +208,8 @@ class MyLanguageScenario(MyScenario):
             self.all_time_covered_targets = torch.full(
                 (self.world.batch_dim, self.n_target_classes, self.n_targets_per_class), False, device=self.world.device
             )
-            self.agent_stopped = torch.full(
-                (self.world.batch_dim, self.n_agents), False, device=self.world.device
-            )
+            self.targets_pos.zero_()
+            self.oneshot_signal.zero_()
             
             # Randomize max target count
             self.num_covered_targets.zero_()
@@ -237,10 +236,10 @@ class MyLanguageScenario(MyScenario):
                     agent.position_history.reset_all()
                 if self.observe_vel_history:
                     agent.velocity_history.reset_all()
-                agent.oneshot_signal.zero_()
 
         else:
             self.all_time_covered_targets[env_index] = False
+            self.oneshot_signal[env_index] = 0.0
             self.targets_pos[env_index].zero_()
 
             # Reset Occupancy grid
@@ -256,7 +255,6 @@ class MyLanguageScenario(MyScenario):
                     agent.position_history.reset(env_index)
                 if self.observe_vel_history:
                     agent.velocity_history.reset(env_index)
-                agent.oneshot_signal[env_index] = 0.0
 
             # Randomize max target count
             self.num_covered_targets[env_index].zero_()
@@ -311,9 +309,8 @@ class MyLanguageScenario(MyScenario):
         
         # Initialize individual rewards
         agent.collision_rew[:] = 0
-        agent.oneshot_rew[:] = 0
+        self.oneshot_rew[:] = 0
         covering_rew = agent.covering_reward if not self.shared_reward else self.shared_covering_rew
-        covering_rew *= 1 - agent.oneshot_signal 
 
         # Compute each reward component separately
         self._compute_collisions(agent)
@@ -331,9 +328,9 @@ class MyLanguageScenario(MyScenario):
             
         # Reward for finding an aditional target grows exponentially - Why? Because the exploration effort increases
         if self.use_expo_search_rew:
-            self.covering_rew_val = torch.exp(self.exponential_search_rew*self.num_covered_targets) + (self.covering_rew_coeff - 1)
+            self.covering_rew_val = torch.exp(self.exponential_search_rew*(self.num_covered_targets + 1) / self.max_target_count) + (self.covering_rew_coeff - 1)
         
-        reward = agent.collision_rew + (covering_rew + self.time_penalty + exploration_rew) * (1 - agent.oneshot_signal) # All postive rewards + time penalty are deactivated once oneshot is on
+        reward = agent.collision_rew + self.time_penalty + (covering_rew + exploration_rew) * (1 - 2 * self.oneshot_signal)  # All postive rewards are inverted once oneshot is on
         
         # Reward applied to the whole team
         if is_first:
@@ -350,19 +347,19 @@ class MyLanguageScenario(MyScenario):
             if self.max_target_objective or self.llm_activate:
                 reached_mask = self.num_covered_targets >= self.max_target_count
                 
-                all_found_rew = reached_mask * (1 - agent.oneshot_signal) * self.terminal_rew_coeff
+                all_found_rew = reached_mask * (1 - self.oneshot_signal) * self.terminal_rew_coeff
                 reward += all_found_rew
                 # Once the max target count is reached, the agent is penalized for moving
                 # This is to prevent the agent from moving around once it has found the maximum number of targets
                 if reached_mask.any():
                     movement_penalty = torch.sum(agent.state.vel[reached_mask]**2, dim=-1) * self.oneshot_coeff
-                    agent.oneshot_rew[reached_mask] = movement_penalty
-                    agent.oneshot_signal[reached_mask] = 1.0
+                    self.oneshot_rew[reached_mask] = movement_penalty
+                    self.oneshot_signal[reached_mask] = 1.0
             
         # Remove targets if found
         if is_last: self._handle_target_respawn()
 
-        return reward + agent.oneshot_rew
+        return reward + self.oneshot_rew
 
     def observation(self, agent: Agent):
         """Collect Observations from the environment"""
