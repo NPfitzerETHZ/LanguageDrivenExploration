@@ -125,8 +125,6 @@ class MyScenario(BaseScenario):
         """Initialize rewards for an agent."""
         agent.collision_rew = torch.zeros(batch_dim, device=self.device)
         agent.covering_reward = agent.collision_rew.clone()
-        agent.oneshot_rew = agent.collision_rew.clone()
-        agent.oneshot_signal = agent.collision_rew.clone()
 
         if self.use_entropy_rew:
             agent.entropy_based_rew = EntropyBasedReward(radius=self._lidar_range, max_buffer_size=30)
@@ -195,6 +193,9 @@ class MyScenario(BaseScenario):
         self.agent_stopped = torch.zeros(batch_dim, self.n_agents, dtype=torch.bool, device=self.device)
         self.num_covered_targets = torch.zeros(batch_dim, device=self.device)
         self.covering_rew_val = torch.ones(batch_dim, device=self.device) * (self.covering_rew_coeff)
+        
+        self.oneshot_rew = torch.zeros(batch_dim, device=self.device)
+        self.oneshot_signal = torch.zeros(batch_dim, device=self.device)
        
     #====================================================================================================================
     #====================================================================================================================
@@ -389,20 +390,6 @@ class MyScenario(BaseScenario):
                 target.state.pos[indices_selected,:] = self._get_outside_pos(None)[
                     indices_selected
                 ]
-
-    def _handle_agents_staying_at_target(self):
-        # Handle agents staying at the target
-        if self.agents_stay_at_target:
-            for agent in self.world.agents:
-                agent_index = self.world.agents.index(agent)
-                reached_target = self.agent_is_covering[:, agent_index]
-
-                newly_stopped = reached_target & ~self.agent_stopped[:, agent_index]
-                self.agent_stopped[:, agent_index] |= newly_stopped
-
-                # Apply movement penalty if the agent has stopped
-                movement_penalty = torch.linalg.norm(agent.state.vel[self.agent_stopped[:, agent_index]], dim=-1) * -1.0
-                agent.oneshot_rew[self.agent_stopped[:, agent_index]] = movement_penalty
     
     def _get_outside_pos(self, env_index):
         """Get a position far outside the environment to hide entities."""
@@ -420,7 +407,6 @@ class MyScenario(BaseScenario):
         return {
             "covering_reward": agent.covering_reward if not self.shared_reward else self.shared_covering_rew,
             "collision_rew": agent.collision_rew,
-            "onehsot_rew": agent.oneshot_rew,
             "targets_covered": self.covered_targets.sum(-1),
         }
 
