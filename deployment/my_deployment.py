@@ -43,6 +43,7 @@ from scenarios.simple_language_deployment_scenario import MyLanguageScenario
 from scenarios.scripts.histories import VelocityHistory, PositionHistory
 import copy
 
+
 def convert_ne_to_xy(north, east):
     """
     Convert coordinates from north–east (NE) ordering to x–y ordering.
