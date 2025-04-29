@@ -148,7 +148,7 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
             max_target_count[env_index] = task_dict["max_targets"].unsqueeze(1).int() 
             self.max_target_embedding_found = True
         else:
-            max_target_count[env_index] = self.num_targets_per_class + 1 # never stop looking
+            max_target_count[env_index] = self.num_targets_per_class #+ 1 # never stop looking
 
         if "grid" in task_dict:
             new_grids_scaled = F.interpolate(
@@ -282,7 +282,10 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         
         # Target Tree: Each class can have X targets
         num_target_groups = len(target_groups)
-        num_targets_per_class = len(target_groups[0])
+        if num_target_groups > 0:
+            num_targets_per_class = len(target_groups[0])
+        else:
+            num_targets_per_class = 0
         
         # Vector to hold new target positions
         target_poses = torch.zeros((packet_size,num_target_groups,num_targets_per_class,2),device=self.device)
@@ -311,7 +314,7 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         for j in range(num_target_groups):
             mask = (target_class[env_index] == j).squeeze(1)
             
-            if False and (use_embedding):
+            if use_embedding:
                 envs = env_index[mask]
                 
                 # Targets 

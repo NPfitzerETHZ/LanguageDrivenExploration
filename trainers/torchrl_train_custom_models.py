@@ -30,13 +30,14 @@ from utils.logging import init_logging, log_evaluation, log_training
 from utils.utils import DoneTransform
 
 from scenarios.llm_target_class_scenario import MyLanguageScenario
+from omegaconf import DictConfig
 
 
 def rendering_callback(env, td):
     env.frames.append(env.render(mode="rgb_array", agent_index_focus=None))
 
 
-@hydra.main(version_base="1.1", config_path="", config_name="mappo_ippo")
+@hydra.main(version_base="1.1", config_path="/Users/nicolaspfitzer/ProrokLab/CustomScenarios/configs", config_name="mappo_ippo")
 def train(cfg: DictConfig):  # noqa: F821
     # Device
     cfg.train.device = "cpu" if not torch.cuda.device_count() else "cuda:0"

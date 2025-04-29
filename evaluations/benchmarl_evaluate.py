@@ -19,7 +19,7 @@ from benchmarl.environments import VmasTask
 from benchmarl.utils import DEVICE_TYPING
 from torchrl.envs import EnvBase, VmasEnv  
 from scenarios.old.grid_maps import MyGridMapScenario
-from llm_heading_scenario import MyLanguageScenario
+from scenarios.llm_heading_scenario import MyLanguageScenario
 
 from benchmarl.models import GnnConfig, SequenceModelConfig
 import torch_geometric
