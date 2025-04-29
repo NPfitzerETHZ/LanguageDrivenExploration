@@ -212,8 +212,6 @@ def main(config: DictConfig):
 
     print('Config:', OmegaConf.to_yaml(config))
 
-
-
     # Copy all .py files and config to runtime dir
     for src in Path('./src/RoboMasterROSPackage/andy_controller').rglob("*.py"):
         dst = log_dir / src.name
