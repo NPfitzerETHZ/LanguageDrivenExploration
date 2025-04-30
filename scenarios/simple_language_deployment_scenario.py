@@ -498,6 +498,19 @@ class MyLanguageScenario(MyScenario):
         if (self.step_count % (10 * 200) == 0 and self.oneshot_coeff > -20.0):
             self.oneshot_coeff -= 2.0
     
+    def process_action(self, agent):
+        
+        # Handle extra action dimension , first 4 actions are for the agent state, fifth is for the done signal
+        action = agent.action
+        
+        # # Pass state actions through the dynamic model
+        # agent.action.u = TorchUtils.clamp_with_norm(agent.action.u, agent.u_range)
+        # agent.controller.process_force()
+        return 
+        
+        
+        
+    
     def extra_render(self, env_index: int = 0) -> "List[Geom]":
         """Render additional visual elements."""
         from vmas.simulator import rendering
