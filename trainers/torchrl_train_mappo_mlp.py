@@ -35,7 +35,7 @@ from omegaconf import DictConfig
 def rendering_callback(env, td):
     env.frames.append(env.render(mode="rgb_array", agent_index_focus=None))
 
-def save_checkpoint(model, optimizer, iteration, total_frames, path="checkpoint.pth"):
+def save_checkpoint(model, optimizer, iteration, total_frames, path="torch_rl_checkpoint.pth"):
     dir_path = os.path.dirname(os.path.abspath(path))
     os.makedirs(dir_path, exist_ok=True)
     checkpoint = {
@@ -47,7 +47,7 @@ def save_checkpoint(model, optimizer, iteration, total_frames, path="checkpoint.
     torch.save(checkpoint, path)
     print(f"Saved checkpoint at iteration {iteration} to {path}")
     
-@hydra.main(version_base="1.1", config_path="/Users/nicolaspfitzer/ProrokLab/CustomScenarios/configs", config_name="mappo_ippo")
+@hydra.main(version_base="1.1", config_path="/Users/nicolaspfitzer/ProrokLab/CustomScenarios/configs", config_name="torchrl_mappo")
 def train(cfg: DictConfig):  # noqa: F821
     # Device
     cfg.train.device = "cpu" if not torch.cuda.device_count() else "cuda:0"
@@ -298,7 +298,7 @@ def train(cfg: DictConfig):  # noqa: F821
         sampling_start = time.time()
         
         if i % cfg.train.checkpoint_interval == 0:
-            checkpoint_path = os.path.join(cfg.train.checkpoint_dir, f"checkpoint_{i}.pth")
+            checkpoint_path = os.path.join(cfg.train.checkpoint_dir, f"torch_rl_checkpoint_{i}.pth")
             save_checkpoint(loss_module, optim, i, total_frames, checkpoint_path)
             
     collector.shutdown()
