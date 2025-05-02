@@ -381,7 +381,7 @@ class MyLanguageScenario(MyScenario):
         pos_hist = agent.position_history.get_flattened() if self.observe_pos_history else None
         vel_hist = agent.velocity_history.get_flattened() if self.observe_vel_history else None
         
-        if not self.use_gnn:
+        if not self.use_gnn and self.n_agents > 1:
             # Collect normalized positions of all other agents
             # Shape is batch_size, 2*N_agents
             other_agents_pos = torch.cat(

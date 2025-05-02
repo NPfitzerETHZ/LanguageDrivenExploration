@@ -10,6 +10,7 @@ import time
 import sys
 import threading
 import numpy as np
+sys.path.insert(0, "/home/npfitzer/robomaster_ws/install/freyja_msgs/lib/python3.10/site-packages")
 from freyja_msgs.msg import CurrentState
 
 class ROSTopicDiagnostics(Node):

@@ -1,5 +1,6 @@
 import rclpy
 from rclpy.node import Node
+sys.path.insert(0, "/home/npfitzer/robomaster_ws/install/freyja_msgs/lib/python3.10/site-packages")
 from freyja_msgs.msg import CurrentState
 import time
 
