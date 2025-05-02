@@ -86,17 +86,17 @@ class MyLanguageScenario(MyScenario):
         self.use_occupancy_grid_obs = kwargs.pop("use_occupency_grid_obs", True)
         self.use_expo_search_rew = kwargs.pop("use_expo_search_rew", True)
 
-        self.agent_collision_penalty = kwargs.pop("agent_collision_penalty", 0.00)
+        self.agent_collision_penalty = kwargs.pop("agent_collision_penalty", -0.5)
         self.obstacle_collision_penalty = kwargs.pop("obstacle_collision_penalty", -0.5)
-        self.covering_rew_coeff = kwargs.pop("covering_rew_coeff", 3.0) # Large-ish reward for finding a target
+        self.covering_rew_coeff = kwargs.pop("covering_rew_coeff", 5.0) # Large-ish reward for finding a target
         self.false_covering_penalty_coeff = kwargs.pop("false_covering_penalty_coeff", -0.25) # Penalty for covering wrong target if hinted
         self.time_penalty = kwargs.pop("time_penalty", -0.01)
         self.terminal_rew_coeff = kwargs.pop("terminal_rew_coeff", 15.0) # Large reward for finding max_targets
         self.exponential_search_rew = kwargs.pop("exponential_search_rew_coeff", 1.5)
-        self.oneshot_coeff = kwargs.pop("oneshot_coeff", -10.0)
+        self.oneshot_coeff = kwargs.pop("oneshot_coeff", -8.0)
         self.exploration_rew_coeff = kwargs.pop("exploration_rew_coeff", -0.01)
         self.new_cell_rew_coeff = kwargs.pop("new_cell_rew_coeff", 0.125)
-        self.heading_exploration_rew_coeff = kwargs.pop("heading_exploration_rew_coeff", 1.0)
+        self.heading_exploration_rew_coeff = kwargs.pop("heading_exploration_rew_coeff", 0.75)
         self.heading_sigma = kwargs.pop("heading_sigma", 3.0)
         
         self.history_length = kwargs.pop("history_length", 4)
@@ -150,8 +150,8 @@ class MyLanguageScenario(MyScenario):
             device=self.device)
         self.occupancy_grid = GeneralPurposeOccupancyGrid(
             batch_size=batch_dim,
-            x_dim=2, # [-1,1]
-            y_dim=2, # [-1,1]
+            x_dim=self.x_semidim*2,
+            y_dim=self.x_semidim*2, 
             num_cells=self.num_grid_cells,
             num_targets=self.n_targets,
             num_targets_per_class=self.n_targets_per_class,
@@ -373,9 +373,21 @@ class MyLanguageScenario(MyScenario):
             lidar_measures = torch.cat(lidar_measures,dim=-1)
 
         # Collect normalized position and velocity and get history if enabled
-        pos, vel = agent.state.pos / torch.tensor([self.x_semidim, self.y_semidim], device=self.device), agent.state.vel
+        # Normalize position to [-1, 1]
+        pos = agent.state.pos / torch.tensor([self.x_semidim, self.y_semidim], device=self.device)
+        # Normalize velocity to units of "fraction of map per timestep"
+        vel = agent.state.vel / torch.tensor([2 * self.x_semidim, 2 * self.y_semidim], device=self.device)
+
         pos_hist = agent.position_history.get_flattened() if self.observe_pos_history else None
         vel_hist = agent.velocity_history.get_flattened() if self.observe_vel_history else None
+        
+        if not self.use_gnn:
+            # Collect normalized positions of all other agents
+            # Shape is batch_size, 2*N_agents
+            other_agents_pos = torch.cat(
+                [a.state.pos / torch.tensor([self.x_semidim, self.y_semidim], device=self.device) for a in self.world.agents if a != agent],
+                dim=-1
+            )
 
         # Collect all observation components
         obs_components = []
@@ -417,6 +429,7 @@ class MyLanguageScenario(MyScenario):
         if not self.use_gnn:
             obs_components.append(pos)
             obs_components.append(vel)
+            obs_components.append(other_agents_pos)
 
         # Concatenate observations along last dimension
         obs = torch.cat([comp for comp in obs_components if comp is not None], dim=-1)
@@ -508,9 +521,6 @@ class MyLanguageScenario(MyScenario):
         # agent.controller.process_force()
         return 
         
-        
-        
-    
     def extra_render(self, env_index: int = 0) -> "List[Geom]":
         """Render additional visual elements."""
         from vmas.simulator import rendering
@@ -579,9 +589,9 @@ class MyLanguageScenario(MyScenario):
                         continue
                     if self.world.get_distance(agent1, agent2)[env_index] <= self._comms_range:
                         line = rendering.Line(
-                            agent1.state.pos[env_index], agent2.state.pos[env_index], width=3
+                            agent1.state.pos[env_index], agent2.state.pos[env_index], width=5
                         )
-                        line.set_color(*Color.BLACK.value)
+                        line.set_color(*Color.GREEN.value)
                         geoms.append(line)
         
         # Render Instruction Sentence

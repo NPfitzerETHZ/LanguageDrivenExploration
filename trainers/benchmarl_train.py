@@ -45,7 +45,7 @@ def get_env_fun(
         **config,
     )
 
-comms_radius = 0.3
+comms_radius = 2.0
 use_gnn = False
 
 VmasTask.get_env_fun = get_env_fun
@@ -56,12 +56,13 @@ experiment_config = ExperimentConfig.get_from_yaml()
 task = VmasTask.NAVIGATION.get_from_yaml()
 task.config = {
         "max_steps": 200,
-        "n_agents": 1,
+        "n_agents": 4,
         "n_targets_per_class": 1,
         "n_target_classes": 1,
         "x_semidim": 1.0,
         "y_semidim": 1.0,
         "mini_grid_radius": 1,
+        "min_collision_distance": 0.05,
         "comms_radius": comms_radius,
         "use_gnn": use_gnn,
         "n_obstacles": 0,

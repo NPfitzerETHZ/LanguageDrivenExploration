@@ -96,7 +96,7 @@ def get_experiment(config):
     VmasTask.get_env_fun = get_env_fun
     
     experiment_config = ExperimentConfig(**config["experiment_config"].value)
-    experiment_config.restore_file = str("/Users/nicolaspfitzer/ProrokLab/CustomScenarios/checkpoints/single_agent_llm_deployment.pt")
+    experiment_config.restore_file = str("/Users/nicolaspfitzer/ProrokLab/CustomScenarios/checkpoints/benchmarl/single_agent_llm_deployment.pt")
     algorithm_config = MappoConfig(**config["algorithm_config"].value)
     model_config = MlpConfig(**config["model_config"].value)
     task = VmasTask.NAVIGATION.get_from_yaml()
@@ -160,7 +160,6 @@ class VmasModels():
     def __init__(self, config: DictConfig, log_dir: Path):
         #super().__init__("vmas_ros_interface")
         ros_config = config["ros_config"]
-        self.robot_id = ros_config.robomaster_id
         self.a_range = ros_config.a_range
         self.v_range = ros_config.v_range
         self.sentence = "Hello"
@@ -346,7 +345,7 @@ class VmasModels():
     #     self.mytime += self.dt
 
 @hydra.main(config_path="/Users/nicolaspfitzer/ProrokLab/CustomScenarios/configs", 
-            config_name="mappo_ippo", version_base="1.1")
+            config_name="benchmarl_mappo", version_base="1.1")
 def main(config: DictConfig):
 
     print('Config:', OmegaConf.to_yaml(config))
