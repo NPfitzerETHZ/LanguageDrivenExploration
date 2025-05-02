@@ -180,10 +180,27 @@ class Agent():
         self.mini_grid_radius = task_config.mini_grid_radius
         self.observe_targets = task_config.observe_targets
         
-        # Create publisher and subscriber for the robot
-        self.pub = self.node.create_publisher(ReferenceState, f"/robomaster_{self.robot_id}/reference_state", 1)
-        self.node.create_subscription(CurrentState, f"/robomaster_{self.robot_id}/current_state", self.current_state_callback, 1)
-
+        # Get topic prefix from config or use default
+        topic_prefix = getattr(ros_config, "topic_prefix", "/robomaster_")
+        
+        # Create publisher for the robot
+        self.pub = self.node.create_publisher(
+            ReferenceState, 
+            f"{topic_prefix}{self.robot_id}/reference_state", 
+            10  # Increased QoS to ensure reliability
+        )
+        
+        # Create subscription with more descriptive variable name
+        self.state_subscription = self.node.create_subscription(
+            CurrentState, 
+            f"{topic_prefix}{self.robot_id}/current_state", 
+            self.current_state_callback, 
+            10  # Increased QoS to ensure reliability
+        )
+        
+        # Log the subscription
+        self.node.get_logger().info(f"Robot {self.robot_id} subscribing to: {topic_prefix}{self.robot_id}/current_state")
+    
         # Create reference state message
         self.reference_state = ReferenceState()
     
@@ -260,7 +277,7 @@ class Agent():
             ("agents", "observation"): obs
         }, batch_size=[1])
         
-        output_td = self.policy(input_td)
+        output_td = self.node.policy(input_td)
 
         # 4. Get the action
         action = output_td[("agents", "action")]

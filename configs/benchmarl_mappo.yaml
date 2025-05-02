@@ -52,7 +52,7 @@ experiment_config:
     evaluation_episodes: 1
     evaluation_deterministic_actions: true
     loggers:
-    - wandb
+    - csv
     project_name: benchmarl
     create_json: true
     save_folder: /Users/nicolaspfitzer/ProrokLab/CustomScenarios/trainers/experiments

@@ -47,14 +47,13 @@ class MyScenario(BaseScenario):
         self.known_map = kwargs.pop("known_map", False)
         self.known_agent_pos = kwargs.pop("known_agents",False) # Not ure about this one. Do I need a GNN?
 
-        self.agent_collision_penalty = kwargs.pop("agent_collision_penalty", -0.0)
         self.obstacle_collision_penalty = kwargs.pop("obstacle_collision_penalty", -0.75)
         self.covering_rew_coeff = kwargs.pop("covering_rew_coeff", 5.0) # Large reward for finding a target
         self.false_covering_penalty_coeff = kwargs.pop("false_covering_penalty_coeff", -0.25) # Penalty for covering wrong target
         self.time_penalty = kwargs.pop("time_penalty", 0)
         ScenarioUtils.check_kwargs_consumed(kwargs)
 
-        self.min_collision_distance = 0.005
+        self.min_collision_distance = kwargs.pop("min_collision_distance", 0.1)
 
         self.viewer_zoom = 1
         self.target_color = Color.GREEN
