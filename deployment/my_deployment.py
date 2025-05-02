@@ -9,6 +9,7 @@ from datetime import datetime  # For real-world time logging
 
 from std_msgs.msg import String
 from std_msgs.msg import UInt8
+sys.path.insert(0, "/home/npfitzer/robomaster_ws/install/freyja_msgs/lib/python3.10/site-packages")
 from freyja_msgs.msg import ReferenceState
 from freyja_msgs.msg import CurrentState
 from freyja_msgs.msg import WaypointTarget
@@ -19,13 +20,9 @@ from benchmarl.experiment import ExperimentConfig, Experiment
 from benchmarl.algorithms import MappoConfig
 from benchmarl.models.mlp import MlpConfig
 from benchmarl.environments import VmasTask
-from scenarios.scripts.general_purpose_occupancy_grid import GeneralPurposeOccupancyGrid, load_task_data
 
 import torch
 import copy
-
-import os
-print(os.getcwd())
 
 import shutil
 from pathlib import Path
@@ -39,6 +36,10 @@ from typing import Callable, Optional
 from benchmarl.environments import VmasTask
 from benchmarl.utils import DEVICE_TYPING
 from torchrl.envs import EnvBase, VmasEnv  
+import sys 
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))) 
+from scenarios.scripts.general_purpose_occupancy_grid import GeneralPurposeOccupancyGrid
 from scenarios.simple_language_deployment_scenario import MyLanguageScenario
 from scenarios.scripts.histories import VelocityHistory, PositionHistory
 import copy
@@ -112,7 +113,7 @@ def get_experiment(config):
     VmasTask.get_env_fun = get_env_fun
     
     experiment_config = ExperimentConfig(**config["experiment_config"].value)
-    experiment_config.restore_file = str("/Users/nicolaspfitzer/ProrokLab/CustomScenarios/checkpoints/single_agent_llm_deployment.pt")
+    experiment_config.restore_sfile = str("/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration/checkpoints/benchmarl/single_agent_llm_deployment.pt")
     algorithm_config = MappoConfig(**config["algorithm_config"].value)
     model_config = MlpConfig(**config["model_config"].value)
     task = VmasTask.NAVIGATION.get_from_yaml()
@@ -362,24 +363,6 @@ class VmasModelsROSInterface(Node):
         self.pos_dim = 2
         self.pos_history_length = config["task_config"].value.history_length
 
-        # Create Agents
-        self.n_agents = config["task_config"].value.n_agents
-        self.observe_pos_history = config["task_config"].value.observe_pos_history
-        self.agents = []
-        for i in range(self.n_agents):
-            agent = Agent(
-                node=self,
-                robot_id=i,
-                pos_history_length=self.pos_history_length,
-                grid=self.occupancy_grid,
-                num_covered_targets=self.num_covered_targets,
-                task_config = config["task_config"].value,
-                ros_config = config["ros_config"],
-                device=config.device
-            )
-            self.agents.append(agent)
-        self.get_logger().info("ROS2 starting ..")
-        
         # Load the LLM model
         embedding = torch.tensor(llm.encode([self.sentence]), device=self.device).squeeze(0)
         self.occupancy_grid.embeddings[0] = embedding
@@ -398,7 +381,25 @@ class VmasModelsROSInterface(Node):
         self.csv_writer = csv.writer(self.log_file)
         self.csv_writer.writerow(["experiment_time", "real_time", "robot_id", "cmd_vel_n", "cmd_vel_e", 
                                   "pos_n", "pos_e", "vel_n", "vel_e"])
-    
+
+        # Create Agents
+        self.n_agents = config["task_config"].value.n_agents
+        self.observe_pos_history = config["task_config"].value.observe_pos_history
+        self.agents = []
+        for i in range(self.n_agents):
+            agent = Agent(
+                node=self,
+                robot_id=i,
+                pos_history_length=self.pos_history_length,
+                grid=self.occupancy_grid,
+                num_covered_targets=self.num_covered_targets,
+                task_config = config["task_config"].value,
+                ros_config = config["ros_config"],
+                device=config.device
+            )
+            self.agents.append(agent)
+        self.get_logger().info("ROS2 starting ..")
+        
     def _create_occupancy_grid(self):
         self.occupancy_grid = GeneralPurposeOccupancyGrid(
             batch_size=1,
@@ -418,8 +419,8 @@ class VmasModelsROSInterface(Node):
 
 
 
-@hydra.main(config_path="/home/andy/Documents/part_iii_project/robomaster_ws/src/RoboMasterROSPackage/config", 
-            config_name="config_sim2real_deployment", version_base="1.2")
+@hydra.main(config_path="/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration/configs", 
+            config_name="benchmarl_mappo", version_base="1.1")
 def main(config: DictConfig):
     rclpy.init()
 
@@ -428,9 +429,6 @@ def main(config: DictConfig):
     runtime_dir = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
     log_dir = runtime_dir / f"run_{timestamp}"
     log_dir.mkdir(parents=True, exist_ok=True)
-
-    print('Config:', OmegaConf.to_yaml(config))
-
 
     # Copy all .py files and config to runtime dir
     for src in Path('./src/RoboMasterROSPackage/andy_controller').rglob("*.py"):
