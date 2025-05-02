@@ -275,8 +275,9 @@ class Agent():
         self.grid.update(pos)
         
         input_td = TensorDict({
-            ("agents", "observation"): obs
-        }, batch_size=[1])
+            ("agents", "observation"): obs.to(dtype=torch.float32, device=self.device)
+        }, batch_size=[1], device=self.device)
+
         
         output_td = self.node.policy(input_td)
 
@@ -301,7 +302,7 @@ class Agent():
 
         # Convert model output back to north-east ordering.
         # Since the model returns (vx, vy) in x-y order, we convert it back:
-        vel_n, vel_e = convert_xy_to_ne(*cmd_vel)
+        vel_n, vel_e = convert_xy_to_ne(*cmd_vel[0])
         self.reference_state.vn = vel_n
         self.reference_state.ve = vel_e
         self.reference_state.yaw = math.pi / 2
@@ -344,7 +345,7 @@ class VmasModelsROSInterface(Node):
 
     def __init__(self, config: DictConfig, log_dir: Path):
         super().__init__("vmas_ros_interface")
-        self.sentence = "Hello"
+        self.sentence = "Team, locate the target in the noth east corner of the room."
         self.device = config.device
         
         # Grid Config

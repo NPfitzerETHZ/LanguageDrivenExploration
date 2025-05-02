@@ -429,7 +429,8 @@ class MyLanguageScenario(MyScenario):
         if not self.use_gnn:
             obs_components.append(pos)
             obs_components.append(vel)
-            obs_components.append(other_agents_pos)
+            if self.n_agents > 1:
+                obs_components.append(other_agents_pos)
 
         # Concatenate observations along last dimension
         obs = torch.cat([comp for comp in obs_components if comp is not None], dim=-1)
