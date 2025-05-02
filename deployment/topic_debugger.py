@@ -18,7 +18,7 @@ class TopicDebugger(Node):
         self.num_robots = 1  # Change as needed
         
         # Subscribe to all possible robot topics
-        self.subscriptions = []
+        self._subscriptions = []
         for i in range(self.num_robots):
             topic_name = f"/robomaster_{i}/current_state"
             self.get_logger().info(f"Subscribing to: {topic_name}")
@@ -28,7 +28,7 @@ class TopicDebugger(Node):
                 lambda msg, robot_id=i: self.callback(msg, robot_id),
                 10
             )
-            self.subscriptions.append(sub)
+            self._subscriptions.append(sub)
         
         # Create timer to check topic list periodically
         self.timer = self.create_timer(5.0, self.check_topics)
