@@ -52,10 +52,10 @@ experiment_config:
     evaluation_episodes: 1
     evaluation_deterministic_actions: true
     loggers:
-    - wandb
+    - csv
     project_name: benchmarl
     create_json: true
-    save_folder: /home/npfitzer/robomaster_ws/outputs
+    save_folder: "/Users/nicolaspfitzer/ProrokLab/CustomScenarios/outputs"
     restore_file: null
     restore_map_location: null
     checkpoint_interval: 150000

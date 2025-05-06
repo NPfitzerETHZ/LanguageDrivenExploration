@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import List
 
 LARGE = 10
-EMBEDDING_SIZE = 1024
 DECODER_OUTPUT_SIZE = 25
 
 train_dict = None
@@ -36,10 +35,10 @@ class Decoder(nn.Module):
         x = self.dropout(self.act(self.l1(x)))
         return torch.tanh(self.l2(x))
 
-def load_decoder(model_path, device):
+def load_decoder(model_path, embedding_size, device):
     
     global decoder_model
-    decoder_model = Decoder(emb_size= EMBEDDING_SIZE, out_size=DECODER_OUTPUT_SIZE)
+    decoder_model = Decoder(emb_size= embedding_size, out_size=DECODER_OUTPUT_SIZE)
     decoder_model.load_state_dict(torch.load(model_path, map_location=device))
     decoder_model.eval()
     
@@ -99,16 +98,40 @@ def load_task_data(
     
 
 MINI_GRID_RADIUS = 1
-EMBEDDING_SIZE = 1024
 DATA_GRID_SHAPE = (10,10)
 DATA_GRID_NUM_TARGET_PATCHES = 1
 
+def apply_density_diffusion(grid, kernel_size=3, sigma=1.0):
+    # Create a Gaussian kernel for diffusion
+    import math
+
+    def gaussian_kernel(k, sigma):
+        ax = torch.arange(-k // 2 + 1., k // 2 + 1.)
+        xx, yy = torch.meshgrid(ax, ax, indexing='ij')
+        kernel = torch.exp(-(xx**2 + yy**2) / (2. * sigma**2))
+        kernel = kernel / kernel.sum()
+        return kernel
+
+    kernel = gaussian_kernel(kernel_size, sigma).to(grid.device)
+    kernel = kernel.expand(grid.size(1), 1, kernel_size, kernel_size)
+
+    # Apply convolution with padding
+    padding = kernel_size // 2
+    blurred = F.conv2d(grid, kernel, padding=padding, groups=grid.size(1))
+
+    # Renormalize to preserve total density (area)
+    total_mass_before = grid.sum(dim=(2, 3), keepdim=True)
+    total_mass_after = blurred.sum(dim=(2, 3), keepdim=True)
+    blurred = blurred * (total_mass_before / (total_mass_after + 1e-8))
+
+    return blurred
+
 class GeneralPurposeOccupancyGrid(OccupancyGrid):
     
-    def __init__(self, x_dim, y_dim, num_cells, batch_size, num_targets, num_targets_per_class, heading_mini_grid_radius=1, device='cpu'):
+    def __init__(self, x_dim, y_dim, num_cells, batch_size, num_targets, num_targets_per_class, embedding_size, heading_mini_grid_radius=1, device='cpu'):
         super().__init__(x_dim, y_dim, num_cells, batch_size, num_targets, heading_mini_grid_radius, device)
 
-        self.embeddings = torch.zeros((self.batch_size,EMBEDDING_SIZE),device=self.device)
+        self.embeddings = torch.zeros((self.batch_size,embedding_size),device=self.device)
         self.sentences = [ "" for _ in range(self.batch_size)]
         self.searching_hinted_target = torch.zeros((self.batch_size,), dtype=torch.bool, device=self.device)
         self.use_embedding_ratio = 1.0
@@ -117,6 +140,8 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         self.num_targets_per_class = num_targets_per_class
         
         self.grid_gaussian_heading = torch.zeros((batch_size,num_targets_per_class,self.padded_grid_height, self.padded_grid_width), device=self.device)
+        self.num_heading_cells = torch.zeros((batch_size,), device=self.device)
+        self.heading_coverage_ratio = torch.zeros((batch_size,), device=self.device)
         
         self.target_attribute_embedding_found = False
         self.max_target_embedding_found = False
@@ -151,11 +176,16 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
             max_target_count[env_index] = self.num_targets_per_class #+ 1 # never stop looking
 
         if "grid" in task_dict:
+            raw_grids = task_dict["grid"].reshape(-1, *DATA_GRID_SHAPE).unsqueeze(1)
+            
+            # Optional: apply diffusion on original resolution
+            #raw_grids = apply_density_diffusion(raw_grids, kernel_size=5, sigma=2.0)
             new_grids_scaled = F.interpolate(
-                task_dict["grid"].reshape(-1, *DATA_GRID_SHAPE).unsqueeze(1),
+                raw_grids,
                 size=(self.grid_height, self.grid_width),
                 mode='nearest'
             )
+
             pad_w = self.padded_grid_height - self.grid_width
             pad_h = self.padded_grid_height - self.grid_height
             pad_left = pad_w // 2
@@ -168,8 +198,15 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
                 mode='constant',
                 value=0
             )
+
             # Flip vertically to match bottom-left origin
             new_grids_scaled = torch.flip(new_grids_scaled, dims=[2])
+
+            # Normalize so sum over spatial dims == 1
+            num_heading_cells = (new_grids_scaled.sum(dim=(2, 3), keepdim=True) + 1e-8)
+            new_grids_scaled = new_grids_scaled / num_heading_cells
+
+            self.num_heading_cells = num_heading_cells.view(-1)
             self.grid_heading[env_index] = new_grids_scaled
 
     def get_target_pose_in_heading(
@@ -180,7 +217,7 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         flat_grid = self.grid_heading[env_index].view(packet_size, -1)  # (B, H*W)
         
         # Mask out values below the threshold
-        valid_mask = flat_grid > 0
+        valid_mask = flat_grid > 0.0005
         masked_grid = flat_grid * valid_mask  # Zero out invalid cells
 
         num_valid = valid_mask.sum(dim=1)  # (B,)
@@ -271,7 +308,7 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         target_groups: List[List[Landmark]],
         target_class: torch.Tensor,
         max_target_count: torch.Tensor,
-        heading_sigma: float,
+        heading_sigma_coef: float,
         padding = True):
         
         """ This function handles the scenario reset. It is unbelievably complicated."""
@@ -332,7 +369,7 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
                         self.grid_visited[envs, vec[:,1].unsqueeze(1).int(), vec[:,0].unsqueeze(1).int()] = VISITED
                         self.grid_visits_sigmoid[envs, vec[:,1].unsqueeze(1).int(), vec[:,0].unsqueeze(1).int()] = 1.0
                         # Compute Gaussian Heading
-                        self.gaussian_heading(envs,t,vec,heading_sigma)
+                        self.gaussian_heading(envs,t,vec,heading_sigma_coef)
                         # Store world position
                         target_poses[mask,j,t] = self.grid_to_world(vec[:,0]-pad, vec[:,1]-pad)
             else:
@@ -345,13 +382,15 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         return obstacle_centers.squeeze(-2), agent_centers.squeeze(-2), target_poses
     
     
-    def gaussian_heading(self, env_index, t_index, pos, sigma=2.0):
+    def gaussian_heading(self, env_index, t_index, pos, sigma_coef=0.1):
         """
         pos: (batch_size, 2)
         env_index: (batch_size,)
         """
 
         batch_size = pos.shape[0]
+        sigma_x = sigma_coef * self.grid_width
+        sigma_y = sigma_coef * self.grid_height
 
         # Create meshgrid once for all grid points
         x_range = torch.arange(self.padded_grid_width, device=pos.device).float()
@@ -367,10 +406,10 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         pos_x = pos[:,0].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
         pos_y = pos[:,1].unsqueeze(1).unsqueeze(2)  # (B, 1, 1)
 
-        dist_x = ((grid_x - pos_x) / sigma) ** 2
-        dist_y = ((grid_y - pos_y) / sigma) ** 2
+        dist_x = ((grid_x - pos_x) / sigma_x) ** 2
+        dist_y = ((grid_y - pos_y) / sigma_y) ** 2
 
-        heading_val = (1 / (2 * torch.pi * sigma * sigma)) * torch.exp(-0.5 * (dist_x + dist_y))  # (B, W, H)
+        heading_val = (1 / (2 * torch.pi * sigma_x * sigma_y)) * torch.exp(-0.5 * (dist_x + dist_y))  # (B, W, H)
         heading_val = heading_val / heading_val.view(batch_size, -1).max(dim=1)[0].view(-1, 1, 1)
 
         # Update grid_heading only if the new value is higher
@@ -383,6 +422,18 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         mask = all_time_covered_targets[torch.arange(0,self.batch_size),target_class]  # (batch, n_targets)
         self.grid_gaussian_heading[mask] = 0.0
     
+    def update_heading_coverage_ratio(self):
+        """ Update the ratio of heading cells covered by the agent. """
+        num_heading_cells_covered = ((self.grid_heading > 0) & (self.grid_visits_sigmoid > 0)).sum(dim=(1, 2))
+        self.heading_coverage_ratio = num_heading_cells_covered / self.num_heading_cells
+        
+    def compute_coverage_ratio_bonus(self, coverage_action):
+        """Reward if coverage action is close to self.heading_coverage_ratio"""
+        coverage_ratio = self.heading_coverage_ratio.view(-1, 1)
+        coverage_ratio_bonus = torch.exp(-torch.abs(coverage_action - coverage_ratio) / 0.2) - 0.5 # 
+        return coverage_ratio_bonus
+    
+        
     def compute_region_heading_bonus(self,pos, heading_exploration_rew_coeff = 1.0):
         """Reward is independent of the grid_heading values, rather fixed by the coefficient"""
 
@@ -395,6 +446,18 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         new_cell_bonus = (visit_lvl < 0.2).float() * heading_exploration_rew_coeff
 
         return in_heading_cell * new_cell_bonus - in_danger_cell * new_cell_bonus
+    
+    def compute_region_heading_bonus_normalized(self,pos, heading_exploration_rew_coeff = 1.0):
+        """Reward potential is constant. Individual cell reward depends on heading grid size."""
+
+        grid_x, grid_y = self.world_to_grid(pos, padding=True)
+
+        heading_lvl = self.grid_heading[torch.arange(pos.shape[0]),grid_y,grid_x] 
+        
+        visit_lvl = self.grid_visits_sigmoid[torch.arange(pos.shape[0]), grid_y, grid_x]
+        new_cell_bonus = (visit_lvl < 0.2).float() * heading_exploration_rew_coeff
+
+        return heading_lvl * new_cell_bonus
     
     def compute_gaussian_heading_bonus(self,pos,heading_exploration_rew_coeff = 1.0):
         
