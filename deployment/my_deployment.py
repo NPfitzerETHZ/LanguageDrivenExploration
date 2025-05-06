@@ -137,6 +137,7 @@ class Agent():
     self,
     node,
     robot_id: int,
+    weight: float,
     pos_history_length: int,
     grid: GeneralPurposeOccupancyGrid,
     num_covered_targets: torch.Tensor,
@@ -146,6 +147,7 @@ class Agent():
         
         self.node = node
         self.robot_id = robot_id
+        self.weight = weight
         
         # Timer to update and publish commands
         self.dt = 1.0 / 20.0
@@ -296,7 +298,8 @@ class Agent():
         pos_x, pos_y = convert_ne_to_xy(self.current_pos_n, self.current_pos_e)
         vel_x, vel_y = convert_ne_to_xy(self.current_vel_n, self.current_vel_e)
 
-        cmd_vel, log_prob = self.compute_action()
+        cmd_u, log_prob = self.compute_action()
+        cmd_vel = cmd_u / self.weight + torch.tensor([vel_x, vel_y], device=self.device).unsqueeze(0)
         cmd_vel = cmd_vel.tolist()
 
         # Convert model output back to north-east ordering.
@@ -356,6 +359,7 @@ class VmasModelsROSInterface(Node):
         self.n_targets = grid_config.n_targets
         self.n_targets_per_class = grid_config.n_targets_per_class
         self.observe_targets = config["task_config"].value.observe_targets
+        self.agent_weight = config["task_config"].value.agent_weight
         self.num_covered_targets = torch.zeros(1, dtype=torch.int, device=self.device)
         self._create_occupancy_grid()
         
@@ -390,6 +394,7 @@ class VmasModelsROSInterface(Node):
             agent = Agent(
                 node=self,
                 robot_id=i,
+                weight=self.agent_weight,
                 pos_history_length=self.pos_history_length,
                 grid=self.occupancy_grid,
                 num_covered_targets=self.num_covered_targets,

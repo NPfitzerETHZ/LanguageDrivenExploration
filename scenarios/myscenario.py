@@ -20,7 +20,6 @@ class MyScenario(BaseScenario):
         #self.num_envs = kwargs.pop("num_envs", 96) disregard for BenchMarl
         self.x_semidim = kwargs.pop("x_semidim", 1.0)
         self.y_semidim = kwargs.pop("y_semidim", 1.0)
-        self.agent_radius = kwargs.pop("agent_radius", 0.05)
         self._min_dist_between_entities = kwargs.pop("min_dist_between_entities", 0.2)
         self._lidar_range = kwargs.pop("lidar_range", 0.15)
         self._covering_range = kwargs.pop("covering_range", 0.15)
@@ -62,8 +61,6 @@ class MyScenario(BaseScenario):
         # Histories
         self.pos_history_length = 10
         self.pos_dim = 2
-        self.observe_pos_history = kwargs.pop("observe_pos_history", False)
-        self.observe_jointpos_history = kwargs.pop("observe_jointpos_history", False)
 
         self.vel_history_length = 30
         self.vel_dim = 2
@@ -87,18 +84,21 @@ class MyScenario(BaseScenario):
             self.device,
             x_semidim=self.x_semidim,
             y_semidim=self.y_semidim,
+            dim_c=self.comm_dim,
             collision_force=500,
             substeps=2,
             drag=0.25,
         )
     
-    def _create_agents(self, world, batch_dim):
+    def _create_agents(self, world, batch_dim, silent):
         """Create agents and add them to the world."""
         for i in range(self.n_agents):
             agent = Agent(
                 name=f"agent_{i}",
                 collide=True,
+                silent=silent,
                 shape=Sphere(radius=self.agent_radius),
+                mass=self.agent_weight,
                 sensors=(self._create_agent_sensors(world) if self.use_lidar else []),
                 color=Color.GREEN
             )
