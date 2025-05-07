@@ -99,6 +99,7 @@ class MyScenario(BaseScenario):
                 silent=silent,
                 shape=Sphere(radius=self.agent_radius),
                 mass=self.agent_weight,
+                u_multiplier=self.agent_weight,
                 sensors=(self._create_agent_sensors(world) if self.use_lidar else []),
                 color=Color.GREEN
             )
