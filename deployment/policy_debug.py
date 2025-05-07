@@ -78,7 +78,7 @@ def get_experiment(config):
     print(config["experiment_config"].value)
     
     experiment_config = ExperimentConfig(**config["experiment_config"].value)
-    experiment_config.restore_sfile = str("/Users/nicolaspfitzer/ProrokLab/CustomScenarios/checkpoints/benchmarl/single_agent_second/single_agent_llm_deployment.pt")
+    experiment_config.restore_sfile = str("/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration/checkpoints/benchmarl/single_agent_first/single_agent_llm_deployment.pt")
     algorithm_config = MappoConfig(**config["algorithm_config"].value)
     model_config = MlpConfig(**config["model_config"].value)
     task = VmasTask.NAVIGATION.get_from_yaml()
@@ -97,7 +97,7 @@ def get_experiment(config):
     
     return experiment
 
-@hydra.main(config_path="/Users/nicolaspfitzer/ProrokLab/CustomScenarios/checkpoints/benchmarl/single_agent_second/", 
+@hydra.main(config_path="/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration/checkpoints/benchmarl/single_agent_first/", 
             config_name="benchmarl_mappo", version_base="1.1")
 def main(config: DictConfig):
     device = torch.device("cpu")

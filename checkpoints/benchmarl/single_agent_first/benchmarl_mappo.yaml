@@ -48,7 +48,7 @@ experiment_config:
     - csv
     project_name: benchmarl
     create_json: true
-    save_folder: /Users/nicolaspfitzer/ProrokLab/CustomScenarios/trainers/experiments
+    save_folder: /home/npfitzer/robomaster_ws/src/LanguageDrivenExploration/
     restore_file: null
     restore_map_location: null
     checkpoint_interval: 150000
