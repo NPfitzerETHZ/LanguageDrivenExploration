@@ -17,6 +17,7 @@ from torch import nn
 from torch.nn import functional as F
 from torchrl.data.utils import DEVICE_TYPING
 from torchrl.modules.models.multiagent import MultiAgentNetBase
+from torchrl.modules.models.multiagent import MultiAgentMLP
 from torchrl.modules.models import MLP
 from torchrl.modules.models.utils import create_on_device
 
@@ -124,6 +125,73 @@ class SplitMLP(nn.Module):
         encoded = torch.cat(head_outputs, dim=-1)
         combined = torch.cat([encoded, x_rest], dim=-1)
         return self.mlp(combined)
+
+
+class MultiAgentMLP_Efficient(MultiAgentMLP):
+    def __init__(
+        self,
+        n_agent_inputs: int | None,
+        n_agent_outputs: int,
+        n_agents: int,
+        *,
+        centralized: bool | None = None,
+        share_params: bool | None = None,
+        embedding_size: int,
+        device: Optional[DEVICE_TYPING] = None,
+        depth: Optional[int] = None,
+        num_cells: Optional[Union[Sequence, int]] = None,
+        activation_class: Optional[Type[nn.Module]] = nn.Tanh,
+        use_td_params: bool = True,
+    
+        **kwargs,
+    ):
+        self.embedding_size = embedding_size
+        super().__init__(
+            n_agent_inputs=n_agent_inputs,
+            n_agent_outputs=n_agent_outputs,
+            n_agents=n_agents,
+            centralized=centralized,
+            share_params=share_params,
+            device=device,
+            depth=depth,
+            num_cells=num_cells,
+            activation_class=activation_class,
+            use_td_params=use_td_params,
+            **kwargs
+        )
+    
+    def _pre_forward_check(self, inputs):
+        if inputs.shape[-2] != self.n_agents:
+            raise ValueError(
+                f"Multi-agent network expected input with shape[-2]={self.n_agents},"
+                f" but got {inputs.shape}"
+            )
+        # If the model is centralized, agents have full observability
+        if self.centralized:
+            # Extracrt the first embedding size from the input
+            inpus_embed = inputs[...,0,:self.embedding_size]
+            # Extract the rest of the inputs
+            inputs_rest = inputs[..., self.embedding_size:]
+            # Flatten the rest of the inputs
+            inputs_rest = inputs_rest.flatten(-2, -1)
+            # Concatenate the embedding with the rest of the inputs
+            inputs = torch.cat([inpus_embed, inputs_rest], dim=-1)
+        return inputs
+    
+    def _build_single_net(self, *, device, **kwargs):
+        n_agent_inputs = self.n_agent_inputs
+        if self.centralized and n_agent_inputs is not None:
+            n_agent_inputs = self.embedding_size + self.n_agents * (self.n_agent_inputs - self.embedding_size)
+        return MLP(
+            in_features=n_agent_inputs,
+            out_features=self.n_agent_outputs,
+            depth=self.depth,
+            num_cells=self.num_cells,
+            activation_class=self.activation_class,
+            device=device,
+            **kwargs,
+        )
+
 
 class MultiAgentMLP_Custom(MultiAgentNetBase):
 
