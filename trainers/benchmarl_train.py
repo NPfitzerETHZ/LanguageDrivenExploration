@@ -46,7 +46,7 @@ def get_env_fun(
     )
 
 comms_radius = 0.5
-use_gnn = False
+use_gnn = True
 
 VmasTask.get_env_fun = get_env_fun
 
@@ -56,14 +56,14 @@ experiment_config = ExperimentConfig.get_from_yaml()
 task = VmasTask.NAVIGATION.get_from_yaml()
 task.config = {
         "max_steps": 250,
-        "n_agents": 1,
+        "n_agents": 4,
         "agent_weight": 3.5,
         "n_targets_per_class": 4,
         "n_target_classes": 1,
         "x_semidim": 1.0,
         "y_semidim": 1.0,
         "mini_grid_radius": 1,
-        "min_collision_distance": 0.05,
+        "min_collision_distance": 0.2,
         "comms_radius": comms_radius,
         "agent_radius": 0.01,
         "use_gnn": use_gnn,
@@ -98,6 +98,20 @@ model_config = MlpConfig(num_cells=[256,256,256],layer_class=nn.Linear,activatio
 critic_model_config = MlpConfig(num_cells=[256,256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
 
 if use_gnn:
+    # gnn_config = GnnConfig(
+    #     topology="from_pos", # Tell the GNN to build topology from positions and edge_radius
+    #     edge_radius=comms_radius, # The edge radius for the topology
+    #     self_loops=True,
+    #     gnn_class=torch_geometric.nn.conv.GATv2Conv,
+    #     gnn_kwargs={"add_self_loops": False, "residual": True}, # kwargs of GATv2Conv, residual is helpful in RL
+    #     position_key="pos",
+    #     pos_features=2,
+    #     velocity_key="vel",
+    #     vel_features=2,
+    #     #gnn_class=torch_geometric.nn.conv.GraphConv,
+    #     exclude_pos_from_node_features=False, # Do we want to use pos just to build edge features or also keep it in node features? 
+    # )
+    
     gnn_config = GnnConfig(
         topology="from_pos", # Tell the GNN to build topology from positions and edge_radius
         edge_radius=comms_radius, # The edge radius for the topology
@@ -108,13 +122,20 @@ if use_gnn:
         pos_features=2,
         velocity_key="vel",
         vel_features=2,
+        exclude_pos_from_node_features=False, # Do we want to use pos just to build edge features or also keep it in node features? 
+    )
+    
+    critic_gnn_config = GnnConfig(
+        topology="full", 
+        self_loops=True,
+        gnn_class=torch_geometric.nn.conv.GCNConv,
         #gnn_class=torch_geometric.nn.conv.GraphConv,
-        exclude_pos_from_node_features=True, # Do we want to use pos just to build edge features or also keep it in node features? Here we remove it as we want to be invariant to system translations (we do not use absolute positions)
+        exclude_pos_from_node_features=False, # Do we want to use pos just to build edge features or also keep it in node features? 
     )
     # We add an MLP layer to process GNN output node embeddings into actions
     mlp_config = MlpConfig(num_cells=[256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
     model_config = SequenceModelConfig(model_configs=[gnn_config, mlp_config], intermediate_sizes=[256])
-    critic_model_config = SequenceModelConfig(model_configs=[gnn_config, mlp_config], intermediate_sizes=[256])
+    critic_model_config = MlpConfig(num_cells=[256,256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
     
 
 train_device = "cpu" # @param {"type":"string"}
