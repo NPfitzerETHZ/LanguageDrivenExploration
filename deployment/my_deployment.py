@@ -176,8 +176,6 @@ class Agent():
         self.observe_pos_history = task_config.observe_pos_history
         self.use_gnn = task_config.use_gnn
         self.llm_activate = task_config.llm_activate
-        self.x_semidim = task_config.x_semidim
-        self.y_semidim = task_config.y_semidim
         self.mini_grid_radius = task_config.mini_grid_radius
         self.observe_targets = task_config.observe_targets
         
@@ -188,7 +186,7 @@ class Agent():
         self.pub = self.node.create_publisher(
             ReferenceState, 
             f"{topic_prefix}{self.robot_id}/reference_state", 
-            10  # Increased QoS to ensure reliability
+            1  
         )
         
         # Create subscription with more descriptive variable name
@@ -196,7 +194,7 @@ class Agent():
             CurrentState, 
             f"{topic_prefix}{self.robot_id}/current_state", 
             self.current_state_callback, 
-            10  # Increased QoS to ensure reliability
+            1
         )
         
         # Log the subscription
@@ -231,61 +229,69 @@ class Agent():
         }
     
     def compute_action(self):
-        
         # Get the current state of the agent
         current_state = self.get_current_state()
         pos_x, pos_y = convert_ne_to_xy(current_state["position_n"], current_state["position_e"])
         vel_x, vel_y = convert_ne_to_xy(current_state["velocity_n"], current_state["velocity_e"])
-        pos_x = pos_x / self.x_semidim
-        pos_y = pos_y / self.y_semidim
+        pos_x = pos_x / self.node.x_semidim
+        pos_y = pos_y / self.node.y_semidim
+        vel_x = vel_x / (2 * self.node.x_semidim)
+        vel_y = vel_y / (2 * self.node.y_semidim)
+
         pos = torch.tensor([pos_x, pos_y], device=self.device).unsqueeze(0)
         vel = torch.tensor([vel_x, vel_y], device=self.device).unsqueeze(0)
         pos_hist = self.pos_history.get_flattened() if self.observe_pos_history else None
-        
-        # Collect all observation components
+
         obs_components = []
-        
-        # Sentence Embedding Observation
+
+        # Sentence embedding (not logged)
         if self.llm_activate:
-            obs_components.append(self.grid.observe_embeddings())
-            
+            obs_components.append(self.grid.observe_embeddings())  # excluded from logging
+
         # Targets
         if self.observe_targets:
-            obs_components.append(self.grid.get_grid_target_observation(pos,self.mini_grid_radius))
-        
+            target_obs = self.grid.get_grid_target_observation(pos, self.mini_grid_radius)
+            self.node.get_logger().info(f"Target observation: {target_obs.cpu().numpy()}")
+            obs_components.append(target_obs)
+
         # Histories
         if self.observe_pos_history:
-            obs_components.append(pos_hist[: pos.shape[0], :])
+            hist_obs = pos_hist[: pos.shape[0], :]
+            self.node.get_logger().info(f"Position history: {hist_obs.cpu().numpy()}")
+            obs_components.append(hist_obs)
             self.pos_history.update(pos)
-        
-        if self.llm_activate:
-            obs_components.append(self.num_covered_targets.unsqueeze(1))
-            
-        # Grid Observation
-        obs_components.append(self.grid.get_grid_visits_obstacle_observation(pos,self.mini_grid_radius))
 
-        # Pose (GNN works different)    
+        # Grid Observation
+        grid_obs = self.grid.get_grid_visits_obstacle_observation(pos, self.mini_grid_radius)
+        self.node.get_logger().info(f"Grid visits/obstacles observation: {grid_obs.cpu().numpy()}")
+        obs_components.append(grid_obs)
+
+        # Number of covered targets (if LLM active)
+        if self.llm_activate:
+            obs_components.append(self.num_covered_targets.unsqueeze(1))  # not logged
+
+        # Pose
         if not self.use_gnn:
+            self.node.get_logger().info(f"Normalized position: {pos.cpu().numpy()}")
+            self.node.get_logger().info(f"Normalized velocity: {vel.cpu().numpy()}")
             obs_components.append(pos)
             obs_components.append(vel)
 
-        # Concatenate observations along last dimension
         obs = torch.cat([comp for comp in obs_components if comp is not None], dim=-1)
-        # Update the occupancy grid with the agent's position
+
         self.grid.update(pos)
-        
+
         input_td = TensorDict({
             ("agents", "observation"): obs.to(dtype=torch.float32, device=self.device)
         }, batch_size=[1], device=self.device)
 
-        
         output_td = self.node.policy(input_td)
 
-        # 4. Get the action
         action = output_td[("agents", "action")]
         log_prob = output_td[("agents", "log_prob")]
-        
+
         return action, log_prob
+
     
     def timer_callback(self):
         # Run repeatedly to send commands to the robot
@@ -303,6 +309,8 @@ class Agent():
         # Convert model output back to north-east ordering.
         # Since the model returns (vx, vy) in x-y order, we convert it back:
         vel_n, vel_e = convert_xy_to_ne(*cmd_vel[0])
+        #self.reference_state.pn = 0
+        #self.reference_state.pe = 0
         self.reference_state.vn = vel_n
         self.reference_state.ve = vel_e
         self.reference_state.yaw = math.pi / 2
@@ -345,13 +353,17 @@ class VmasModelsROSInterface(Node):
 
     def __init__(self, config: DictConfig, log_dir: Path):
         super().__init__("vmas_ros_interface")
-        self.sentence = "Team, locate the target in the noth east corner of the room."
+        self.sentence = "Team, locate the target in the south east corner of the room."
         self.device = config.device
         
         # Grid Config
         grid_config = config["grid_config"]
         self.x_semidim = grid_config.x_semidim
         self.y_semidim = grid_config.y_semidim
+
+        self.task_x_semidim = config["task_config"].value.x_semidim
+        self.task_y_semidim = config["task_config"].value.y_semidim
+
         self.num_grid_cells = grid_config.num_grid_cells
         self.mini_grid_radius = grid_config.mini_grid_radius
         self.n_targets = grid_config.n_targets
@@ -390,7 +402,7 @@ class VmasModelsROSInterface(Node):
         for i in range(self.n_agents):
             agent = Agent(
                 node=self,
-                robot_id=i,
+                robot_id=6,
                 pos_history_length=self.pos_history_length,
                 grid=self.occupancy_grid,
                 num_covered_targets=self.num_covered_targets,
@@ -404,8 +416,8 @@ class VmasModelsROSInterface(Node):
     def _create_occupancy_grid(self):
         self.occupancy_grid = GeneralPurposeOccupancyGrid(
             batch_size=1,
-            x_dim=2, # [-1,1]
-            y_dim=2, # [-1,1]
+            x_dim=self.task_x_semidim*2, # [-1,1]
+            y_dim=self.task_y_semidim*2, # [-1,1]
             num_cells=self.num_grid_cells,
             num_targets=self.n_targets,
             num_targets_per_class=self.n_targets_per_class,
