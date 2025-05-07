@@ -23,6 +23,7 @@ from torchrl.envs.libs.vmas import VmasEnv
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 from torchrl.modules import ProbabilisticActor, TanhNormal, ValueOperator
 from torchrl.modules.models.multiagent import MultiAgentMLP
+from models.models import MultiAgentMLP_Efficient
 from torchrl.objectives import ClipPPOLoss, ValueEstimators
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils.logging import init_logging, log_evaluation, log_training
@@ -66,24 +67,29 @@ def train(cfg: DictConfig):  # noqa: F821
     mini_grid_radius = 1
     n_target_classes = 1
     kwargs = {
-        "n_agents": 1,
-        "n_targets_per_class": 1,
-        "n_target_classes": n_target_classes,
+        "n_targets_per_class": 4,
+        "n_target_classes": 1,
+        "x_semidim": 1.0,
+        "y_semidim": 1.0,
+        "mini_grid_radius": 1,
+        "min_collision_distance": 0.05,
         "comms_radius": comms_radius,
         "use_gnn": use_gnn,
         "n_obstacles": 0,
         "global_heading_objective": False,
-        "num_grid_cells": 400,
-        "data_json_path": 'data/language_data_complete_single_target_color_medium.json',
+        "num_grid_cells": 1024,
+        "embedding_size": cfg.model.embedding_size,
+        "data_json_path": 'data/language_data_complete_multi_target_color_scale.json',
         "decoder_model_path": 'decoders/llm0_decoder_model_grid_single_target_color.pth',
-        "llm_activated": True,
+        "llm_activate": True,
         "use_decoder": False,
         "use_grid_data": True,
         "use_class_data": False,
         "use_max_targets_data": False,
+        "observe_pos_history": False,
         "observe_targets": False,
-        "mini_grid_radius": mini_grid_radius
-    }
+        "history_length": 0
+}
     
     # Create env and env_test
     env = VmasEnv(
@@ -114,12 +120,13 @@ def train(cfg: DictConfig):  # noqa: F821
 
     # Policy
     actor_net = nn.Sequential(
-        MultiAgentMLP(
+        MultiAgentMLP_Efficient(
             n_agent_inputs=env.observation_spec["agents", "observation"].shape[-1],
             n_agent_outputs=2 * env.action_spec.shape[-1],
             n_agents=env.n_agents,
             centralised=False,
             share_params=cfg.model.shared_parameters,
+            embedding_size=cfg.model.embedding_size,
             device=cfg.train.device,
             depth=2,
             num_cells=256,
@@ -146,12 +153,13 @@ def train(cfg: DictConfig):  # noqa: F821
     )
 
     # Critic
-    module = MultiAgentMLP(
+    module = MultiAgentMLP_Efficient(
         n_agent_inputs=env.observation_spec["agents", "observation"].shape[-1],
         n_agent_outputs=1,
         n_agents=env.n_agents,
         centralised=cfg.model.centralised_critic,
         share_params=cfg.model.shared_parameters,
+        embedding_size=cfg.model.embedding_size,
         device=cfg.train.device,
         depth=2,
         num_cells=256,
