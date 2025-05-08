@@ -323,7 +323,7 @@ class Agent():
         vel_x, vel_y = convert_ne_to_xy(self.current_vel_n, self.current_vel_e)
 
         cmd_u, log_prob = self.compute_action()
-        cmd_vel = cmd_u / self.weight + torch.tensor([vel_x, vel_y], device=self.device).unsqueeze(0)
+        cmd_vel = cmd_u + torch.tensor([vel_x, vel_y], device=self.device).unsqueeze(0)
         cmd_vel = cmd_vel.tolist()
 
         # Convert model output back to north-east ordering.
@@ -449,7 +449,7 @@ class VmasModelsROSInterface(Node):
 
 
 
-@hydra.main(config_path="/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration/configs", 
+@hydra.main(config_path="/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration/checkpoints/benchmarl/single_agent_first/", 
             config_name="benchmarl_mappo", version_base="1.1")
 def main(config: DictConfig):
     rclpy.init()
