@@ -8,6 +8,7 @@ from vmas.simulator.utils import Color, ScenarioUtils
 from scenarios.scripts.histories import VelocityHistory, PositionHistory, JointPosHistory
 from scenarios.scripts.occupancy_grid import OccupancyGrid
 from scenarios.old.rewards import CountBasedReward, EntropyBasedReward, JointEntropyBasedReward
+from vmas.simulator.controllers.velocity_controller import VelocityController
 
 from vmas.simulator.sensors import Lidar
 
@@ -90,7 +91,7 @@ class MyScenario(BaseScenario):
             drag=0.25,
         )
     
-    def _create_agents(self, world, batch_dim, silent):
+    def _create_agents(self, world, batch_dim, use_velocity_controler, silent):
         """Create agents and add them to the world."""
         for i in range(self.n_agents):
             agent = Agent(
@@ -99,10 +100,16 @@ class MyScenario(BaseScenario):
                 silent=silent,
                 shape=Sphere(radius=self.agent_radius),
                 mass=self.agent_weight,
-                u_multiplier=self.agent_weight,
+                max_speed=self.agent_max_speed,
+                u_multiplier=1,
                 sensors=(self._create_agent_sensors(world) if self.use_lidar else []),
                 color=Color.GREEN
             )
+            if use_velocity_controler:
+                pid_controller_params = [2, 6, 0.002]
+                agent.controller = VelocityController(
+                    agent, world, pid_controller_params, "standard"
+                )
             self._initialize_agent_rewards(agent, batch_dim)
             self._create_agent_state_histories(agent, batch_dim)
             world.add_agent(agent)
