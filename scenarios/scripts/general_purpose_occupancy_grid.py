@@ -128,8 +128,8 @@ def apply_density_diffusion(grid, kernel_size=3, sigma=1.0):
 
 class GeneralPurposeOccupancyGrid(OccupancyGrid):
     
-    def __init__(self, x_dim, y_dim, num_cells, batch_size, num_targets, num_targets_per_class, embedding_size, heading_mini_grid_radius=1, device='cpu'):
-        super().__init__(x_dim, y_dim, num_cells, batch_size, num_targets, heading_mini_grid_radius, device)
+    def __init__(self, x_dim, y_dim, num_cells, batch_size, num_targets, num_targets_per_class, visit_threshold, embedding_size, heading_mini_grid_radius=1, device='cpu'):
+        super().__init__(x_dim, y_dim, num_cells, visit_threshold, batch_size, num_targets, heading_mini_grid_radius, device)
 
         self.embeddings = torch.zeros((self.batch_size,embedding_size),device=self.device)
         self.sentences = [ "" for _ in range(self.batch_size)]

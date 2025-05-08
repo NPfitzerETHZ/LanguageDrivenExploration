@@ -42,6 +42,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from scenarios.scripts.general_purpose_occupancy_grid import GeneralPurposeOccupancyGrid
 from scenarios.simple_language_deployment_scenario import MyLanguageScenario
 from scenarios.scripts.histories import VelocityHistory, PositionHistory
+from torchrl.envs.utils import ExplorationType, set_exploration_type
 import copy
 
 
@@ -83,6 +84,11 @@ def get_env_fun(
             **config,
         )
 
+def _load_experiment_cpu(self):
+    loaded_dict = torch.load(self.config.restore_file, map_location=torch.device("cpu"))
+    self.load_state_dict(loaded_dict)
+    return self
+
 import importlib
 def load_class(class_path: str):
     """
@@ -111,9 +117,12 @@ def load_class(class_path: str):
 def get_experiment(config):
     
     VmasTask.get_env_fun = get_env_fun
+    Experiment._load_experiment = _load_experiment_cpu
+    
+    print(config["experiment_config"].value)
     
     experiment_config = ExperimentConfig(**config["experiment_config"].value)
-    experiment_config.restore_sfile = str("/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration/checkpoints/benchmarl/single_agent_llm_deployment.pt")
+    experiment_config.restore_file = str("/Users/nicolaspfitzer/ProrokLab/CustomScenarios/checkpoints/benchmarl/single_agent_first/single_agent_llm_deployment.pt")
     algorithm_config = MappoConfig(**config["algorithm_config"].value)
     model_config = MlpConfig(**config["model_config"].value)
     task = VmasTask.NAVIGATION.get_from_yaml()
@@ -287,7 +296,15 @@ class Agent():
             ("agents", "observation"): obs.to(dtype=torch.float32, device=self.device)
         }, batch_size=[1], device=self.device)
 
-        output_td = self.node.policy(input_td)
+        deterministic = True
+        exp_type = (
+            ExplorationType.DETERMINISTIC if deterministic
+            else ExplorationType.RANDOM
+        )
+        
+        #    and run the policy
+        with torch.no_grad(), set_exploration_type(exp_type):
+            output_td = self.node.policy(input_td)
 
         action = output_td[("agents", "action")]
         log_prob = output_td[("agents", "log_prob")]
@@ -386,11 +403,6 @@ class VmasModelsROSInterface(Node):
         experiment = get_experiment(config)
         
         self.policy = experiment.policy
-        
-        actor = self.policy[0]
-        forward_model = actor.module[0]
-        self.mlp = copy.deepcopy(actor.module[0].module[0])
-        self.probabilistic_module = actor.module[1]
 
         # Setup CSV logging
                 # Setup logging to CSV in runtime dir

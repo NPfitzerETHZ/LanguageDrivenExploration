@@ -17,7 +17,7 @@ VISITED_TARGET= -1
 
 class OccupancyGrid:
 
-    def __init__(self, x_dim, y_dim, num_cells, batch_size, num_targets, heading_mini_grid_radius=1, device='cpu'):
+    def __init__(self, x_dim, y_dim, num_cells, visit_threshold, batch_size, num_targets, heading_mini_grid_radius=1, device='cpu'):
 
         self.x_dim = x_dim  # World width
         self.y_dim = y_dim  # World height
@@ -31,8 +31,8 @@ class OccupancyGrid:
         self.cell_size_y = self.y_dim / self.grid_height
         self.cell_radius = ((self.cell_size_x/2)**2+(self.cell_size_y/2)**2)**0.5
         self.num_targets = num_targets
-
-        self.visit_threshold = 3 
+        
+        self.visit_threshold = visit_threshold
 
         self.padded_grid_width = self.grid_width + 2 # Added padding to set obstacles around the env.
         self.padded_grid_height = self.grid_height + 2

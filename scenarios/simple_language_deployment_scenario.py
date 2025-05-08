@@ -7,7 +7,7 @@ import random
 
 from vmas import render_interactively
 from vmas.simulator.core import Agent,Landmark, Sphere, Box, World, Line
-from vmas.simulator.utils import Color, ScenarioUtils
+from vmas.simulator.utils import Color, ScenarioUtils, TorchUtils
 
 if typing.TYPE_CHECKING:
     from vmas.simulator.rendering import Geom
@@ -16,6 +16,7 @@ from scenarios.myscenario import MyScenario
 from scenarios.old.dead_end import DeadEndOccupancyGrid
 from scenarios.scripts.heading import HeadingOccupancyGrid
 from scenarios.scripts.general_purpose_occupancy_grid import GeneralPurposeOccupancyGrid, load_task_data, load_decoder
+
 
 # color_dict = {
 #     "red":      {"rgb": [1.0, 0.0, 0.0], "index": 0},
@@ -55,7 +56,7 @@ class MyLanguageScenario(MyScenario):
         self._initialize_scenario_vars(batch_dim)
         world = self._create_world(batch_dim)
         self._create_occupancy_grid(batch_dim)
-        self._create_agents(world, batch_dim, silent = self.comm_dim == 0)
+        self._create_agents(world, batch_dim, self.use_velocity_controller, silent = self.comm_dim == 0)
         self._create_targets(world)
         self._create_obstacles(world)
         self._initialize_rewards(batch_dim)
@@ -63,7 +64,9 @@ class MyLanguageScenario(MyScenario):
     
     def _load_scenario_config(self,kwargs):
         
-        self.agent_weight = kwargs.pop("agent_weight", 3.5)
+        self.agent_weight = kwargs.pop("agent_weight", 1.0)
+        self.agent_max_speed = kwargs.pop("agent_max_speed", 4.5)
+        self.use_velocity_controller = kwargs.pop("use_velocity_controller", True)
         self.data_json_path = kwargs.pop("data_json_path", "")
         self.decoder_model_path = kwargs.pop("decoder_model_path", "")
         self.use_decoder = kwargs.pop("use_decoder", False)
@@ -87,8 +90,9 @@ class MyLanguageScenario(MyScenario):
         self.use_occupancy_grid_rew = kwargs.pop("use_occupency_grid_rew", True)
         self.use_occupancy_grid_obs = kwargs.pop("use_occupency_grid_obs", True)
         self.use_expo_search_rew = kwargs.pop("use_expo_search_rew", True)
+        self.grid_visit_threshold = kwargs.pop("grid_visit_threshold", 3)
 
-        self.agent_collision_penalty = kwargs.pop("agent_collision_penalty", -0.0)
+        self.agent_collision_penalty = kwargs.pop("agent_collision_penalty", -0.5)
         self.obstacle_collision_penalty = kwargs.pop("obstacle_collision_penalty", -0.5)
         self.covering_rew_coeff = kwargs.pop("covering_rew_coeff", 5.0) # Large-ish reward for finding a target
         self.false_covering_penalty_coeff = kwargs.pop("false_covering_penalty_coeff", -0.25) # Penalty for covering wrong target if hinted
@@ -96,6 +100,7 @@ class MyLanguageScenario(MyScenario):
         self.terminal_rew_coeff = kwargs.pop("terminal_rew_coeff", 15.0) # Large reward for finding max_targets
         self.exponential_search_rew = kwargs.pop("exponential_search_rew_coeff", 1.5)
         self.oneshot_coeff = kwargs.pop("oneshot_coeff", -5.0)
+    
         
         # Rewards for exploration
             # 1) Penalty for not exploring (staying in the same cell)
@@ -163,6 +168,7 @@ class MyLanguageScenario(MyScenario):
             num_cells=self.num_grid_cells,
             num_targets=self.n_targets,
             num_targets_per_class=self.n_targets_per_class,
+            visit_threshold=self.grid_visit_threshold,
             embedding_size=self.embedding_size,
             heading_mini_grid_radius=self.mini_grid_radius*2,
             device=self.device)
@@ -349,7 +355,7 @@ class MyLanguageScenario(MyScenario):
         if self.use_expo_search_rew:
             self.covering_rew_val = torch.exp(self.exponential_search_rew*(self.num_covered_targets + 1) / self.max_target_count) + (self.covering_rew_coeff - 1)
         
-        reward = agent.collision_rew + (covering_rew + exploration_rew + self.time_penalty) * (1 - self.oneshot_signal)  # All postive rewards are inverted once oneshot is on
+        reward = agent.collision_rew + (covering_rew + exploration_rew + self.time_penalty) * (1 - self.oneshot_signal) + coverage_rew  # All postive rewards are inverted once oneshot is on
         
         # Reward applied to the whole team
         if is_first:
@@ -517,10 +523,19 @@ class MyLanguageScenario(MyScenario):
                 self.heading_sigma_coef -= self.heading_curriculum
  
                 
-    def process_action(self, agent):
+    def process_action(self, agent: Agent):
         
         if self.comm_dim > 0:
             self.coverage_action[agent.name] = agent.action._c.clone()
+            
+        # Clamp square to circle
+        agent.action.u = TorchUtils.clamp_with_norm(agent.action.u, agent.u_range)
+
+        # Zero small input
+        action_norm = torch.linalg.vector_norm(agent.action.u, dim=1)
+        agent.action.u[action_norm < 0.08] = 0
+
+        agent.controller.process_force()
         
         
     def extra_render(self, env_index: int = 0) -> "List[Geom]":

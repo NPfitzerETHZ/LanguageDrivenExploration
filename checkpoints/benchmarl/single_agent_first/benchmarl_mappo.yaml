@@ -48,7 +48,7 @@ experiment_config:
     - csv
     project_name: benchmarl
     create_json: true
-    save_folder: /home/npfitzer/robomaster_ws/src/LanguageDrivenExploration/
+    save_folder: .
     restore_file: null
     restore_map_location: null
     checkpoint_interval: 150000
@@ -83,20 +83,21 @@ task_config:
   value:
     max_steps: 250
     n_agents: 1
-    agent_weight: 3.5
+    agent_weight: 1.0
+    agent_radius: 0.05
     n_targets_per_class: 4
     n_target_classes: 1
     x_semidim: 1.0
     y_semidim: 1.0
     mini_grid_radius: 1
+    grid_visit_threshold: 3.0
     min_collision_distance: 0.05
     comms_radius: 0.5
-    agent_radius: 0.01
     use_gnn: false
     comm_dim: 0
     n_obstacles: 0
     global_heading_objective: false
-    num_grid_cells: 1024
+    num_grid_cells: 100
     embedding_size: 1024
     data_json_path: data/language_data_complete_multi_target_color_scale.json
     decoder_model_path: decoders/llm0_decoder_model_grid_single_target_color.pth

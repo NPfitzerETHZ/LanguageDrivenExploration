@@ -57,23 +57,25 @@ task = VmasTask.NAVIGATION.get_from_yaml()
 task.config = {
         "max_steps": 250,
         "n_agents": 4,
-        "agent_weight": 3.5,
+        "agent_weight": 1.0,
+        "agent_radius": 0.05,
         "n_targets_per_class": 4,
         "n_target_classes": 1,
         "x_semidim": 1.0,
         "y_semidim": 1.0,
         "mini_grid_radius": 1,
+        "grid_visit_threshold": 3,
         "min_collision_distance": 0.2,
         "comms_radius": comms_radius,
-        "agent_radius": 0.01,
         "use_gnn": use_gnn,
         "comm_dim": 0,
         "n_obstacles": 0,
         "global_heading_objective": False,
-        "num_grid_cells": 1024,
+        "num_grid_cells": 100,
         "embedding_size": 1024,
         "data_json_path": 'data/language_data_complete_multi_target_color_scale.json',
         "decoder_model_path": 'decoders/llm0_decoder_model_grid_single_target_color.pth',
+        "use_veolcity_controler": True,
         "llm_activate": True,
         "use_decoder": False,
         "use_grid_data": True,
@@ -147,11 +149,11 @@ experiment_config.render = True
 experiment_config.evaluation = True
 experiment_config.share_policy_params = True # Policy parameter sharing on
 experiment_config.loggers = ["csv"]
-experiment_config.max_n_frames = 20_000_000 # Runs one iteration, change to 50_000_000 for full training
-experiment_config.evaluation_interval = 200_000
-experiment_config.on_policy_collected_frames_per_batch = 50_000
-experiment_config.on_policy_n_envs_per_worker = 250
-experiment_config.on_policy_minibatch_size = 4_000  # closer to RLlib’s 4096
+experiment_config.max_n_frames = 18_000_000 # Runs one iteration, change to 50_000_000 for full training
+experiment_config.evaluation_interval = 120_000
+experiment_config.on_policy_collected_frames_per_batch = 30_000
+experiment_config.on_policy_n_envs_per_worker = 125
+experiment_config.on_policy_minibatch_size = 3_000  # closer to RLlib’s 4096
 experiment_config.on_policy_n_minibatch_iters = 45
 
 experiment_config.save_folder = Path(os.path.dirname(os.path.realpath(__file__))) / "experiments"
