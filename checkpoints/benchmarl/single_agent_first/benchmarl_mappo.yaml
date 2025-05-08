@@ -3,6 +3,9 @@ device: cpu
 ros_config:
   a_range: 0.5
   v_range: 0.5
+grid_config:
+  x_semidim: 3.0
+  y_semidim: 1.5
 experiment_config:
   desc: null
   value:
@@ -90,7 +93,7 @@ task_config:
     x_semidim: 1.0
     y_semidim: 1.0
     mini_grid_radius: 1
-    grid_visit_threshold: 3.0
+    grid_visit_threshold: 3
     min_collision_distance: 0.05
     comms_radius: 0.5
     use_gnn: false
