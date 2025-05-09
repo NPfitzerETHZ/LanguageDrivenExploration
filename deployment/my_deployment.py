@@ -122,7 +122,7 @@ def get_experiment(config):
     print(config["experiment_config"].value)
     
     experiment_config = ExperimentConfig(**config["experiment_config"].value)
-    experiment_config.restore_file = str("/Users/nicolaspfitzer/ProrokLab/CustomScenarios/checkpoints/benchmarl/single_agent_first/single_agent_llm_deployment.pt")
+    experiment_config.restore_file = str("/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration/checkpoints/benchmarl/single_agent_first/single_agent_llm_deployment.pt")
     algorithm_config = MappoConfig(**config["algorithm_config"].value)
     model_config = MlpConfig(**config["model_config"].value)
     task = VmasTask.NAVIGATION.get_from_yaml()
@@ -161,6 +161,9 @@ class Agent():
         # Timer to update and publish commands
         self.dt = 1.0 / 20.0
         self.mytime = 0.0
+        self.step_count = 0
+        self.max_steps = 200  # Change as needed
+
         
         self.a_range = ros_config.a_range
         self.v_range = ros_config.v_range
@@ -317,13 +320,20 @@ class Agent():
         if not self.state_received:
             self.node.get_logger().info("Current state not received yet.")
             return
+        
+        if self.step_count >= self.max_steps:
+            self.node.get_logger().info(f"Robot {self.robot_id} reached {self.max_steps} steps. Stopping.")
+            self.timer.cancel()
+            self.send_zero_velocity()
+            self.node.notify_agent_stopped(self.robot_id)
+            return
 
         # Convert current state to model input (x-y ordering)
         pos_x, pos_y = convert_ne_to_xy(self.current_pos_n, self.current_pos_e)
         vel_x, vel_y = convert_ne_to_xy(self.current_vel_n, self.current_vel_e)
 
-        cmd_u, log_prob = self.compute_action()
-        cmd_vel = cmd_u + torch.tensor([vel_x, vel_y], device=self.device).unsqueeze(0)
+        cmd_vel, log_prob = self.compute_action()
+        
         cmd_vel = cmd_vel.tolist()
 
         # Convert model output back to north-east ordering.
@@ -357,6 +367,7 @@ class Agent():
 
         # Update simulation time
         self.mytime += self.dt
+        self.step_count += 1
 
 
     def send_zero_velocity(self):
@@ -375,6 +386,8 @@ class VmasModelsROSInterface(Node):
         super().__init__("vmas_ros_interface")
         self.sentence = "Team, locate the target in the south east corner of the room."
         self.device = config.device
+
+        self.agents_done = set()
         
         # Grid Config
         grid_config = config["grid_config"]
@@ -383,13 +396,15 @@ class VmasModelsROSInterface(Node):
 
         self.task_x_semidim = config["task_config"].value.x_semidim
         self.task_y_semidim = config["task_config"].value.y_semidim
+        self.embedding_size = config["task_config"].value.embedding_size
 
-        self.num_grid_cells = grid_config.num_grid_cells
-        self.mini_grid_radius = grid_config.mini_grid_radius
-        self.n_targets = grid_config.n_targets
-        self.n_targets_per_class = grid_config.n_targets_per_class
+        self.num_grid_cells = config["task_config"].value.num_grid_cells
+        self.mini_grid_radius = config["task_config"].value.mini_grid_radius
+        self.n_target_classes = config["task_config"].value.n_target_classes
+        self.n_targets_per_class = config["task_config"].value.n_targets_per_class
         self.observe_targets = config["task_config"].value.observe_targets
         self.agent_weight = config["task_config"].value.agent_weight
+        self.grid_visit_threshold = config["task_config"].value.grid_visit_threshold
         self.num_covered_targets = torch.zeros(1, dtype=torch.int, device=self.device)
         self._create_occupancy_grid()
         
@@ -397,11 +412,8 @@ class VmasModelsROSInterface(Node):
         self.pos_dim = 2
         self.pos_history_length = config["task_config"].value.history_length
 
-        # Load the LLM model
-        embedding = torch.tensor(llm.encode([self.sentence]), device=self.device).squeeze(0)
-        self.occupancy_grid.embeddings[0] = embedding
+        # Load experiment
         experiment = get_experiment(config)
-        
         self.policy = experiment.policy
 
         # Setup CSV logging
@@ -418,7 +430,7 @@ class VmasModelsROSInterface(Node):
         for i in range(self.n_agents):
             agent = Agent(
                 node=self,
-                robot_id=i,
+                robot_id=6,
                 weight=self.agent_weight,
                 pos_history_length=self.pos_history_length,
                 grid=self.occupancy_grid,
@@ -428,6 +440,8 @@ class VmasModelsROSInterface(Node):
                 device=config.device
             )
             self.agents.append(agent)
+        
+        self.prompt_for_new_instruction()
         self.get_logger().info("ROS2 starting ..")
         
     def _create_occupancy_grid(self):
@@ -436,8 +450,10 @@ class VmasModelsROSInterface(Node):
             x_dim=self.task_x_semidim*2, # [-1,1]
             y_dim=self.task_y_semidim*2, # [-1,1]
             num_cells=self.num_grid_cells,
-            num_targets=self.n_targets,
+            num_targets=self.n_target_classes * self.n_targets_per_class,
             num_targets_per_class=self.n_targets_per_class,
+            visit_threshold=self.grid_visit_threshold,
+            embedding_size=self.embedding_size,
             heading_mini_grid_radius=self.mini_grid_radius*2,
             device=self.device)
         self._covering_range = self.occupancy_grid.cell_radius
@@ -446,6 +462,24 @@ class VmasModelsROSInterface(Node):
         for agent in self.agents:
             agent.timer.cancel()
             agent.send_zero_velocity()
+    
+    def notify_agent_stopped(self, robot_id):
+        self.agents_done.add(robot_id)
+        if len(self.agents_done) == self.n_agents:
+            self.get_logger().info("All agents stopped after 200 steps.")
+            self.prompt_for_new_instruction()
+    
+    def prompt_for_new_instruction(self):
+        new_sentence = input("Enter a new instruction for the agents: ")
+        embedding = torch.tensor(llm.encode([new_sentence]), device=self.device).squeeze(0)
+        self.occupancy_grid.embeddings[0] = embedding
+
+        # Reset agent step counts and restart timers
+        for agent in self.agents:
+            agent.step_count = 0
+            agent.timer.reset()  # or create a new timer if needed
+        self.agents_done.clear()
+        self.get_logger().info("Starting agents with new instruction.")
 
 
 
