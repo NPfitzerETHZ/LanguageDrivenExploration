@@ -10,7 +10,7 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))) 
 #from scenarios.old.grid_maps import MyGridMapScenario
 #from llm_heading_scenario import MyLanguageScenario
-from scenarios.simple_language_deployment_scenario import MyLanguageScenario
+from scenarios.decentralized_exploration import MyLanguageScenario
 
 from benchmarl.models import GnnConfig, SequenceModelConfig
 import torch_geometric
@@ -58,14 +58,14 @@ task.config = {
         "max_steps": 250,
         "n_agents": 4,
         "agent_weight": 1.0,
-        "agent_radius": 0.05,
+        "agent_radius": 0.15,
         "n_targets_per_class": 4,
         "n_target_classes": 1,
-        "x_semidim": 1.0,
-        "y_semidim": 1.0,
+        "x_semidim": 2.0,
+        "y_semidim": 2.0,
         "mini_grid_radius": 1,
         "grid_visit_threshold": 3,
-        "min_collision_distance": 0.2,
+        "min_collision_distance": 0.05,
         "comms_radius": comms_radius,
         "use_gnn": use_gnn,
         "comm_dim": 0,
@@ -83,6 +83,7 @@ task.config = {
         "use_max_targets_data": False,
         "observe_pos_history": False,
         "observe_targets": False,
+        "shared_target_reward": True,
         "history_length": 0
 }
 

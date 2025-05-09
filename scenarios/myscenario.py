@@ -33,7 +33,7 @@ class MyScenario(BaseScenario):
         self._agents_per_target = kwargs.pop("agents_per_target", 1)
         self.agents_stay_at_target = kwargs.pop("agents_stay_at_target", False)
         self.targets_respawn = kwargs.pop("targets_respawn", False)
-        self.shared_reward = kwargs.pop("shared_reward", False)  # Reward for finding a target
+        self.shared_target_reward = kwargs.pop("shared_target_reward", True)  # Reward for finding a target
         self.shared_final_reward = kwargs.pop("shared_final_reward", True) # Reward for finding all targets, if targets_respawn false
 
         self.add_obstacles = kwargs.pop("add_obstacles", False)  # This isn't implemented yet
@@ -200,9 +200,6 @@ class MyScenario(BaseScenario):
         self.agent_stopped = torch.zeros(batch_dim, self.n_agents, dtype=torch.bool, device=self.device)
         self.num_covered_targets = torch.zeros(batch_dim, device=self.device)
         self.covering_rew_val = torch.ones(batch_dim, device=self.device) * (self.covering_rew_coeff)
-        
-        self.oneshot_rew = torch.zeros(batch_dim, device=self.device)
-        self.oneshot_signal = torch.zeros(batch_dim, device=self.device)
        
     #====================================================================================================================
     #====================================================================================================================
@@ -237,7 +234,6 @@ class MyScenario(BaseScenario):
         # print(self.max_target_count)
         # print("==========================")
         # print(self.num_covered_targets/self.n_targets)
-        # print(agent.oneshot_signal)
 
         if self.observe_pos_history:
             obs_components.append(pos_hist[: pos.shape[0], :])
@@ -354,32 +350,25 @@ class MyScenario(BaseScenario):
             self.shared_covering_rew += self.agent_reward(agent)
         self.shared_covering_rew[self.shared_covering_rew != 0] /= 2
 
-    def _compute_novelty_rewards(self, agent):
-
-        """Compute novelty-based rewards (count-based, entropy, joint entropy)."""
-        pos = agent.state.pos
-        reward = torch.zeros(self.world.batch_dim, device=self.world.device)
-
-        if self.use_count_rew:
-            reward += agent.count_based_rew.compute(pos)*torch.abs(agent.oneshot_signal-1) # If oneshot is activated, no more reward for moving
-            agent.count_based_rew.update(pos)
-
-        if self.use_entropy_rew:
-            reward += agent.entropy_based_rew.compute(pos)*torch.abs(agent.oneshot_signal-1)
-            agent.entropy_based_rew.update(pos)
-
-        if self.use_jointentropy_rew: # This is wrongggg
-            all_positions = torch.stack([a.state.pos for a in self.world.agents], dim=1)
-            reward += self.jointentropy_rew.compute(all_positions)*torch.abs(agent.oneshot_signal-1)
-            self.jointentropy_rew.update(all_positions)
+    def _compute_exploration_rewards(self, agent, pos):
         
-        if self.use_occupancy_grid_rew:
-            reward += self.occupancy_grid.compute_exploration_bonus(pos)
-            self.occupancy_grid.update(pos)
-        
-        return reward
+        agent.exploration_rew += agent.occupancy_grid.compute_exploration_bonus(pos, exploration_rew_coeff=self.exploration_rew_coeff, new_cell_rew_coeff=self.new_cell_rew_coeff)
+        if (self.global_heading_objective or self.llm_activate):
+                agent.exploration_rew += self.occupancy_grid.compute_region_heading_bonus_normalized(pos, heading_exploration_rew_coeff=self.heading_exploration_rew_coeff)
+                self.occupancy_grid.update_heading_coverage_ratio()
+                if self.comm_dim > 0:
+                    agent.coverage_rew = self.occupancy_grid.compute_coverage_ratio_bonus(self.coverage_action[agent.name]) 
+        self.occupancy_grid.update(pos)
+        agent.occupancy_grid.update(pos)
     
-    #====================================================================================================================
+    def _compute_termination_rewards(self,agent):
+        reached_mask = agent.num_covered_targets >= self.max_target_count 
+        agent.termination_rew += reached_mask * (1 - agent.termination_signal) * self.terminal_rew_coeff
+        if reached_mask.any():
+            movement_penalty = torch.sum(agent.state.vel[reached_mask]**2, dim=-1) * self.termination_penalty_coeff
+            agent.termination_rew[reached_mask] += movement_penalty
+            agent.termination_signal[reached_mask] = 1.0
+    
     #====================================================================================================================
 
     def _handle_target_respawn(self):
@@ -412,7 +401,7 @@ class MyScenario(BaseScenario):
     def info(self, agent: Agent) -> Dict[str, torch.Tensor]:
         """Return auxiliary information about the agent."""
         return {
-            "covering_reward": agent.covering_reward if not self.shared_reward else self.shared_covering_rew,
+            "covering_reward": agent.covering_reward if not self.shared_target_reward else self.shared_covering_rew,
             "collision_rew": agent.collision_rew,
             "targets_covered": self.covered_targets.sum(-1),
         }

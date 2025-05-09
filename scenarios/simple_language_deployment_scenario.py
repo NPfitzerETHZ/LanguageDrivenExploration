@@ -170,7 +170,6 @@ class MyLanguageScenario(MyScenario):
             num_targets_per_class=self.n_targets_per_class,
             visit_threshold=self.grid_visit_threshold,
             embedding_size=self.embedding_size,
-            heading_mini_grid_radius=self.mini_grid_radius*2,
             device=self.device)
         self._covering_range = self.occupancy_grid.cell_radius
 
