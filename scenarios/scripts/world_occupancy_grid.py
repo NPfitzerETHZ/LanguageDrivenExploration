@@ -2,7 +2,7 @@ import random
 import torch
 import numpy as np
 import json
-from scenarios.scripts.occupancy_grid import OccupancyGrid, TARGET, OBSTACLE, VISITED
+from scenarios.scripts.core_occupancy_grid import CoreOccupancyGrid, TARGET, OBSTACLE, VISITED
 from vmas.simulator.core import Landmark
 import torch.nn as nn
 import torch.nn.functional as F
@@ -126,25 +126,26 @@ def apply_density_diffusion(grid, kernel_size=3, sigma=1.0):
 
     return blurred
 
-class GeneralPurposeOccupancyGrid(OccupancyGrid):
+class WorldOccupancyGrid(CoreOccupancyGrid):
     
-    def __init__(self, x_dim, y_dim, num_cells, batch_size, num_targets, num_targets_per_class, visit_threshold, embedding_size, device='cpu'):
-        super().__init__(x_dim, y_dim, num_cells, visit_threshold, batch_size, num_targets, device)
+    def __init__(self, x_dim, y_dim, num_cells, batch_size, num_targets, num_targets_per_class, visit_threshold, embedding_size, world_grid=True, device='cpu'):
+        super().__init__(x_dim, y_dim, num_cells, visit_threshold, batch_size, num_targets, embedding_size, device)
 
-        self.embeddings = torch.zeros((self.batch_size,embedding_size),device=self.device)
-        self.sentences = [ "" for _ in range(self.batch_size)]
-        self.searching_hinted_target = torch.zeros((self.batch_size,), dtype=torch.bool, device=self.device)
-        self.use_embedding_ratio = 1.0
-        self.heading_lvl_threshold = 0.5
+        self.world_grid = world_grid
+        if self.world_grid:
+            self.use_embedding_ratio = 1.0
+            self.heading_lvl_threshold = 0.5
+            self.searching_hinted_target = torch.zeros((self.batch_size,), dtype=torch.bool, device=self.device)
+            self.grid_gaussian_heading = torch.zeros((batch_size,num_targets_per_class,self.padded_grid_height, self.padded_grid_width), device=self.device)
+            self.grid_heading = torch.zeros((batch_size,self.padded_grid_height, self.padded_grid_width), device=self.device)
+            self.num_heading_cells = torch.zeros((batch_size,), device=self.device)
+            self.heading_coverage_ratio = torch.zeros((batch_size,), device=self.device)
+        
+            self.target_attribute_embedding_found = False
+            self.max_target_embedding_found = False
         
         self.num_targets_per_class = num_targets_per_class
         
-        self.grid_gaussian_heading = torch.zeros((batch_size,num_targets_per_class,self.padded_grid_height, self.padded_grid_width), device=self.device)
-        self.num_heading_cells = torch.zeros((batch_size,), device=self.device)
-        self.heading_coverage_ratio = torch.zeros((batch_size,), device=self.device)
-        
-        self.target_attribute_embedding_found = False
-        self.max_target_embedding_found = False
     
     def sample_dataset(self,env_index, packet_size, target_class, max_target_count, num_target_groups):
         
@@ -206,7 +207,7 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
             num_heading_cells = (new_grids_scaled.sum(dim=(2, 3), keepdim=True) + 1e-8)
             new_grids_scaled = new_grids_scaled / num_heading_cells
 
-            self.num_heading_cells = num_heading_cells.view(-1)
+            self.num_heading_cells[env_index] = num_heading_cells.view(-1,1)
             self.grid_heading[env_index] = new_grids_scaled
 
     def get_target_pose_in_heading(
@@ -294,7 +295,6 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         for j, mask in unknown_targets.items():
             target_poses[mask,j,:] = target_center[mask,t:t+self.num_targets_per_class]
             self.grid_targets[env_index[mask], target_grid_y[mask,t:t+self.num_targets_per_class]+pad, target_grid_x[mask,t:t+self.num_targets_per_class]+pad] = (TARGET + j)
-            self.grid_visited[env_index[mask], target_grid_y[mask,t:t+self.num_targets_per_class]+pad, target_grid_x[mask,t:t+self.num_targets_per_class]+pad] = VISITED
             self.grid_visits_sigmoid[env_index[mask], target_grid_y[mask,t:t+self.num_targets_per_class]+pad, target_grid_x[mask,t:t+self.num_targets_per_class]+pad] = 1.0
             t += self.num_targets_per_class
         
@@ -354,8 +354,8 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
             if use_embedding:
                 envs = env_index[mask]
                 
-                # Targets 
                 self.searching_hinted_target[envs] = True
+
                 # Cancel mask: Environments which are not targetting class j or don't meet the valid heading threshold
                 declined_targets_mask = (~mask).clone()
                 unknown_targets[j] = declined_targets_mask
@@ -366,7 +366,6 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
                         vec = self.get_target_pose_in_heading(envs,envs.numel())
                         # Place the target in the grid (and mark as visited, this a test)
                         self.grid_targets[envs, vec[:,1].unsqueeze(1).int(), vec[:,0].unsqueeze(1).int()] = (TARGET + j)
-                        self.grid_visited[envs, vec[:,1].unsqueeze(1).int(), vec[:,0].unsqueeze(1).int()] = VISITED
                         self.grid_visits_sigmoid[envs, vec[:,1].unsqueeze(1).int(), vec[:,0].unsqueeze(1).int()] = 1.0
                         # Compute Gaussian Heading
                         self.gaussian_heading(envs,t,vec,heading_sigma_coef)
@@ -416,11 +415,13 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         for i in range(batch_size):
             self.grid_gaussian_heading[env_index[i],t_index] = heading_val[i]
     
-    def update_multi_target_gaussian_heading(self, all_time_covered_targets: torch.Tensor, target_class):
+    def get_grid_heading_observation(self, pos, mini_grid_radius):
 
-        # All found heading regions are reset
-        mask = all_time_covered_targets[torch.arange(0,self.batch_size),target_class]  # (batch, n_targets)
-        self.grid_gaussian_heading[mask] = 0.0
+        x_range , y_range = self.sample_mini_grid(pos, mini_grid_radius)
+
+        mini_grid = self.grid_heading[torch.arange(pos.shape[0]).unsqueeze(1).unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)]
+
+        return mini_grid.flatten(start_dim=1, end_dim=-1)
     
     def update_heading_coverage_ratio(self):
         """ Update the ratio of heading cells covered by the agent. """
@@ -432,7 +433,6 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         coverage_ratio = self.heading_coverage_ratio.view(-1, 1)
         coverage_ratio_bonus = torch.exp(-torch.abs(coverage_action - coverage_ratio) / 0.2) - 0.5 # 
         return coverage_ratio_bonus
-    
         
     def compute_region_heading_bonus(self,pos, heading_exploration_rew_coeff = 1.0):
         """Reward is independent of the grid_heading values, rather fixed by the coefficient"""
@@ -471,23 +471,22 @@ class GeneralPurposeOccupancyGrid(OccupancyGrid):
         return new_cell_bonus * heading_val
         #return heading_val * heading_exploration_rew_coeff  # Open question: Should the heading bonus degrade after visiting the cell or not? 
     
-    def observe_embeddings(self):
-
-        return self.embeddings.flatten(start_dim=1,end_dim=-1)
-    
     def reset_all(self):
-        self.sentences = [ ""  for _ in range(self.batch_size)]
-        self.embeddings.zero_()
-        self.searching_hinted_target.zero_()
+
         self.grid_gaussian_heading.zero_()
+        self.grid_heading.zero_()
+        self.searching_hinted_target.zero_()
+        self.num_heading_cells.zero_()
+        self.heading_coverage_ratio.zero_()
         return super().reset_all()
     
     def reset_env(self, env_index):
         
-        self.sentences[env_index] = ""
-        self.embeddings[env_index].zero_()
-        self.searching_hinted_target[env_index].zero_()
         self.grid_gaussian_heading[env_index].zero_()
+        self.grid_heading[env_index].zero_()
+        self.searching_hinted_target[env_index].zero_()
+        self.num_heading_cells[env_index].zero_()
+        self.heading_coverage_ratio[env_index].zero_()
         return super().reset_env(env_index)
             
 
