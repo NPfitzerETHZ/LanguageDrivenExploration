@@ -2,7 +2,7 @@ import random
 import torch
 import numpy as np
 import json
-from scenarios.scripts.occupancy_grid import OccupancyGrid, TARGET, OBSTACLE, VISITED
+from scenarios.scripts.grids.occupancy_grid import OccupancyGrid, TARGET, OBSTACLE, VISITED
 from vmas.simulator.core import Landmark
 import torch.nn as nn
 import torch.nn.functional as F

@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
-from scenarios.scripts.occupancy_grid import OccupancyGrid
-from scenarios.scripts.occupancy_grid import VISITED
+from scenarios.scripts.grids.occupancy_grid import OccupancyGrid
+from scenarios.scripts.grids.occupancy_grid import VISITED
 
 class DeadEndOccupancyGrid(OccupancyGrid):
     def __init__(self, x_dim, y_dim, num_cells, batch_size, num_targets, mini_grid_dim=3, device='cpu'):

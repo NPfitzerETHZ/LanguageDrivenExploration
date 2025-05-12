@@ -10,7 +10,8 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))) 
 #from scenarios.old.grid_maps import MyGridMapScenario
 #from llm_heading_scenario import MyLanguageScenario
-from scenarios.decentralized_exploration import MyLanguageScenario
+#from scenarios.decentralized.decentralized_exploration import MyLanguageScenario
+from scenarios.centralized.multi_agent_llm_exploration import MyLanguageScenario
 
 from benchmarl.models import GnnConfig, SequenceModelConfig
 import torch_geometric
@@ -58,11 +59,11 @@ task.config = {
         "max_steps": 250,
         "n_agents": 4,
         "agent_weight": 1.0,
-        "agent_radius": 0.15,
+        "agent_radius": 0.01,
         "n_targets_per_class": 4,
         "n_target_classes": 1,
-        "x_semidim": 2.0,
-        "y_semidim": 2.0,
+        "x_semidim": 1.0,
+        "y_semidim": 1.0,
         "mini_grid_radius": 1,
         "grid_visit_threshold": 3,
         "min_collision_distance": 0.05,
@@ -71,9 +72,9 @@ task.config = {
         "comm_dim": 0,
         "n_obstacles": 0,
         "global_heading_objective": False,
-        "num_grid_cells": 100,
-        "embedding_size": 1024,
-        "data_json_path": 'data/language_data_complete_multi_target_color_scale.json',
+        "num_grid_cells": 1024,
+        "embedding_size": 3072,
+        "data_json_path": 'data/language_data_complete_multi_target_color_scale_gemini.json',
         "decoder_model_path": 'decoders/llm0_decoder_model_grid_single_target_color.pth',
         "use_veolcity_controler": True,
         "llm_activate": True,
@@ -120,26 +121,25 @@ if use_gnn:
         edge_radius=comms_radius, # The edge radius for the topology
         self_loops=True,
         gnn_class=torch_geometric.nn.conv.GATv2Conv,
-        gnn_kwargs={"add_self_loops": True, "residual": True}, # kwargs of GATv2Conv, residual is helpful in RL
+        gnn_kwargs={"add_self_loops": True, "residual": True}, # kwargs of GATv2Conv, residual is helpf>
         position_key="pos",
         pos_features=2,
         velocity_key="vel",
         vel_features=2,
-        exclude_pos_from_node_features=False, # Do we want to use pos just to build edge features or also keep it in node features? 
+        exclude_pos_from_node_features=False, # Do we want to use pos just to build edge features or al>
     )
-    
+
     critic_gnn_config = GnnConfig(
         topology="full", 
         self_loops=True,
         gnn_class=torch_geometric.nn.conv.GCNConv,
         #gnn_class=torch_geometric.nn.conv.GraphConv,
-        exclude_pos_from_node_features=False, # Do we want to use pos just to build edge features or also keep it in node features? 
+        exclude_pos_from_node_features=False, # Do we want to use pos just to build edge features or al>
     )
     # We add an MLP layer to process GNN output node embeddings into actions
-    mlp_config = MlpConfig(num_cells=[256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
-    model_config = SequenceModelConfig(model_configs=[gnn_config, mlp_config], intermediate_sizes=[256])
-    critic_model_config = MlpConfig(num_cells=[256,256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
-    
+    mlp_config = MlpConfig(num_cells=[512,256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
+    model_config = SequenceModelConfig(model_configs=[gnn_config, mlp_config], intermediate_sizes=[512])
+    critic_model_config = MlpConfig(num_cells=[512,256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
 
 train_device = "cpu" # @param {"type":"string"}
 vmas_device = "cpu" # @param {"type":"string"}
@@ -149,13 +149,21 @@ experiment_config.train_device = train_device
 experiment_config.render = True
 experiment_config.evaluation = True
 experiment_config.share_policy_params = True # Policy parameter sharing on
-experiment_config.loggers = ["csv"]
+experiment_config.loggers = ["wandb"]
 experiment_config.max_n_frames = 18_000_000 # Runs one iteration, change to 50_000_000 for full training
 experiment_config.evaluation_interval = 120_000
 experiment_config.on_policy_collected_frames_per_batch = 30_000
 experiment_config.on_policy_n_envs_per_worker = 125
 experiment_config.on_policy_minibatch_size = 3_000  # closer to RLlib’s 4096
 experiment_config.on_policy_n_minibatch_iters = 45
+
+
+# Catastrophic Reward Decay Counter-Measures:
+algorithm_config.critic_coef = 0.5
+algorithm_config.loss_critic_type = 'smooth_l1'
+experiment_config.clip_grad_val = 2.
+experiment_config.on_policy_n_minibatch_iters = 20
+
 
 experiment_config.save_folder = Path(os.path.dirname(os.path.realpath(__file__))) / "experiments"
 experiment_config.save_folder.mkdir(parents=True, exist_ok=True)

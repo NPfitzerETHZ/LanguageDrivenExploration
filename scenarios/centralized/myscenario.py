@@ -5,9 +5,9 @@ from vmas.simulator.scenario import BaseScenario
 from vmas.simulator.core import Agent,Landmark, Sphere, Box, World
 from vmas.simulator.utils import Color, ScenarioUtils 
 
-from scenarios.scripts.histories import VelocityHistory, PositionHistory, JointPosHistory
-from scenarios.scripts.occupancy_grid import OccupancyGrid
-from scenarios.old.rewards import CountBasedReward, EntropyBasedReward, JointEntropyBasedReward
+from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory
+from scenarios.grids.occupancy_grid import OccupancyGrid
+from scenarios.old.rewards import CountBasedReward, EntropyBasedReward
 from vmas.simulator.controllers.velocity_controller import VelocityController
 
 from vmas.simulator.sensors import Lidar

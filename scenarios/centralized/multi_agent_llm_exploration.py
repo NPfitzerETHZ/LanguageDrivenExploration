@@ -1,9 +1,6 @@
 import typing
 from typing import List
-
 import torch
-import numpy as np
-import random
 
 from vmas import render_interactively
 from vmas.simulator.core import Agent,Landmark, Sphere, Box, World, Line
@@ -14,12 +11,10 @@ from vmas.simulator.scenario import BaseScenario
 if typing.TYPE_CHECKING:
     from vmas.simulator.rendering import Geom
 
-from scenarios.myscenario import MyScenario
-from scenarios.old.dead_end import DeadEndOccupancyGrid
-from scenarios.scripts.heading import HeadingOccupancyGrid
-from scenarios.scripts.world_occupancy_grid import WorldOccupancyGrid, CoreOccupancyGrid, load_task_data, load_decoder
-from scenarios.scripts.observation import observation
-from scenarios.scripts.rewards import compute_reward
+from scenarios.grids.world_occupancy_grid import WorldOccupancyGrid, load_task_data, load_decoder
+from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory
+from scenarios.centralized.scripts.observation import observation
+from scenarios.centralized.scripts.rewards import compute_reward
 
 color_dict = {
     "red":      {"rgb": [1.0, 0.0, 0.0], "index": 0},
@@ -165,6 +160,19 @@ class MyLanguageScenario(BaseScenario):
 
         # Final check
         ScenarioUtils.check_kwargs_consumed(kwargs)
+    
+    def _create_world(self, batch_dim: int):
+        """Create and return the simulation world."""
+        return World(
+            batch_dim,
+            self.device,
+            x_semidim=self.x_semidim,
+            y_semidim=self.y_semidim,
+            dim_c=self.comm_dim,
+            collision_force=500,
+            substeps=2,
+            drag=0.25,
+        )
 
     
     def _create_agents(self, world, batch_dim, use_velocity_controler, silent):
@@ -189,17 +197,6 @@ class MyLanguageScenario(BaseScenario):
                     agent, world, pid_controller_params, "standard"
                 )
                 
-            if self.use_occupancy_grid_obs:
-                agent.occupancy_grid = CoreOccupancyGrid(
-                    x_dim=self.x_semidim*2,
-                    y_dim=self.x_semidim*2, 
-                    num_cells=self.num_grid_cells,
-                    visit_threshold=self.grid_visit_threshold,
-                    batch_size=batch_dim,
-                    embedding_size=self.embedding_size,
-                    num_targets=self.n_targets,
-                    device=self.device)
-                
             # Initialize Agent Variables
             agent.collision_rew = torch.zeros(batch_dim, device=self.device)
             agent.covering_reward = agent.collision_rew.clone()
@@ -210,6 +207,12 @@ class MyLanguageScenario(BaseScenario):
             agent.termination_rew = torch.zeros(batch_dim, device=self.device)
             agent.termination_signal = torch.zeros(batch_dim, device=self.device)
             world.add_agent(agent)
+    
+    def _create_agent_state_histories(self, agent, batch_dim):
+        if self.observe_pos_history:
+            agent.position_history = PositionHistory(batch_dim,self.pos_history_length, self.pos_dim, self.device)
+        if self.observe_vel_history:
+            agent.velocity_history = VelocityHistory(batch_dim,self.vel_history_length, self.vel_dim, self.device)
 
     def _create_occupancy_grid(self, batch_dim):
         
@@ -284,7 +287,7 @@ class MyLanguageScenario(BaseScenario):
         """Initialize global rewards."""
         self.shared_covering_rew = torch.zeros(batch_dim, device=self.device)
         self.covering_rew_val = torch.ones(batch_dim, device=self.device) * (self.covering_rew_coeff)
-    
+
     def reset_world_at(self, env_index = None):
         """Reset the world for a given environment index."""
 
@@ -304,7 +307,6 @@ class MyLanguageScenario(BaseScenario):
                 
             # Reset agents
             for agent in self.world.agents:
-                agent.occupancy_grid.reset_all()
                 agent.num_covered_targets.zero_()
                 agent.termination_signal.zero_()
                 if self.observe_pos_history:
@@ -324,7 +326,6 @@ class MyLanguageScenario(BaseScenario):
 
             # Reset agents
             for agent in self.world.agents:
-                agent.occupancy_grid.reset_env(env_index)
                 agent.num_covered_targets[env_index] = 0
                 agent.termination_signal[env_index] = 0.0
                 if self.observe_pos_history:
@@ -360,20 +361,33 @@ class MyLanguageScenario(BaseScenario):
 
         for target in self._targets[self.n_targets :]:
             target.set_pos(self._get_outside_pos(env_index), batch_index=env_index)
-        
-        # Update agent occupancy grids with copies of the global occupancy grid
-        for agent in self.world.agents:
-            if self.use_occupancy_grid_obs:
+    
+    def _handle_target_respawn(self):
+        """Handle target respawn and removal for covered targets."""
+
+        for j, targets in enumerate(self.target_groups):
+            indices = torch.where(self.target_class == j)[0]
+            for i, target in enumerate(targets):
+                # Keep track of all-time covered targets
+                self.all_time_covered_targets[indices] += self.covered_targets[indices]
+
+                # Move covered targets outside the environment
+                indices_selected = torch.where(self.covered_targets[indices,self.target_class[indices],i])[0]
+                indices_selected = indices[indices_selected]
+                target.state.pos[indices_selected,:] = self._get_outside_pos(None)[
+                    indices_selected
+                ]
                 
-                ### MAPS ###
-                agent.occupancy_grid.grid_visits = self.occupancy_grid.grid_visits.clone()
-                agent.occupancy_grid.grid_visits_sigmoid = self.occupancy_grid.grid_visits_sigmoid.clone()
-                agent.occupancy_grid.grid_targets = self.occupancy_grid.grid_targets.clone()
-                agent.occupancy_grid.grid_obstacles = self.occupancy_grid.grid_obstacles.clone()
-                
-                ### EMBEDDINGS ###
-                agent.occupancy_grid.embeddings = self.occupancy_grid.embeddings.clone()
-                agent.occupancy_grid.sentences = self.occupancy_grid.sentences.copy()
+    def _get_outside_pos(self, env_index):
+        """Get a position far outside the environment to hide entities."""
+        return torch.empty(
+            (
+                (1, self.world.dim_p)
+                if env_index is not None
+                else (self.world.batch_dim, self.world.dim_p)
+            ),
+            device=self.world.device,
+        ).uniform_(-1000 * self.world.x_semidim, -10 * self.world.x_semidim)
         
     def reward(self, agent: Agent):
         """Compute the reward for a given agent."""

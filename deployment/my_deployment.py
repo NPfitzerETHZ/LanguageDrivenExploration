@@ -19,6 +19,7 @@ from tensordict import TensorDict
 from benchmarl.experiment import ExperimentConfig, Experiment
 from benchmarl.algorithms import MappoConfig
 from benchmarl.models.mlp import MlpConfig
+from benchmarl.models import GnnConfig, SequenceModelConfig
 from benchmarl.environments import VmasTask
 
 import torch
@@ -39,9 +40,9 @@ from torchrl.envs import EnvBase, VmasEnv
 import sys 
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))) 
-from scenarios.scripts.general_purpose_occupancy_grid import GeneralPurposeOccupancyGrid
-from scenarios.simple_language_deployment_scenario import MyLanguageScenario
-from scenarios.scripts.histories import VelocityHistory, PositionHistory
+from scenarios.grids.world_occupancy_grid import WorldOccupancyGrid
+from scenarios.centralized.multi_agent_llm_exploration import MyLanguageScenario
+from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 import copy
 
@@ -118,18 +119,32 @@ def get_experiment(config):
     
     VmasTask.get_env_fun = get_env_fun
     Experiment._load_experiment = _load_experiment_cpu
+    OmegaConf.set_struct(config["model_config"].value.model_configs[0].gnn_kwargs, False)
     
     print(config["experiment_config"].value)
     
     experiment_config = ExperimentConfig(**config["experiment_config"].value)
-    experiment_config.restore_file = str("/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration/checkpoints/benchmarl/single_agent_first/single_agent_llm_deployment.pt")
-    algorithm_config = MappoConfig(**config["algorithm_config"].value)
-    model_config = MlpConfig(**config["model_config"].value)
+    experiment_config.restore_file = str("/Users/nicolaspfitzer/ProrokLab/CustomScenarios/checkpoints/benchmarl/gnn_multi_agent_first/gnn_multi_agent_llm_deployment.pt")
     task = VmasTask.NAVIGATION.get_from_yaml()
     task.config = config["task_config"].value
+    algorithm_config = MappoConfig(**config["algorithm_config"].value)
     
-    model_config.activation_class = load_class(model_config.activation_class)
-    model_config.layer_class = load_class(model_config.layer_class)
+    use_gnn = config["task_config"].value.use_gnn
+    
+    if not use_gnn: 
+        model_config = MlpConfig(**config["model_config"].value)
+        model_config.activation_class = load_class(config["model_config"].value.activation_class)
+        model_config.layer_class = load_class(config["model_config"].value.layer_class)
+    else:
+        gnn_cfg = config["model_config"].value.model_configs[0]
+        mlp_cfg = config["model_config"].value.model_configs[1]
+        gnn_config = GnnConfig(**gnn_cfg)
+        gnn_config.gnn_class = load_class(gnn_cfg.gnn_class)
+        # We add an MLP layer to process GNN output node embeddings into actions
+        mlp_config = MlpConfig(**mlp_cfg)
+        mlp_config.activation_class = load_class(mlp_cfg.activation_class)
+        mlp_config.layer_class = load_class(mlp_cfg.layer_class)
+        model_config = SequenceModelConfig(model_configs=[gnn_config, mlp_config], intermediate_sizes=config["model_config"].value.intermediate_sizes)
     
     experiment = Experiment(
         config=experiment_config,
@@ -148,7 +163,7 @@ class Agent():
     robot_id: int,
     weight: float,
     pos_history_length: int,
-    grid: GeneralPurposeOccupancyGrid,
+    grid: WorldOccupancyGrid,
     num_covered_targets: torch.Tensor,
     task_config,
     ros_config,
@@ -163,7 +178,9 @@ class Agent():
         self.mytime = 0.0
         self.step_count = 0
         self.max_steps = 200  # Change as needed
-
+        
+        # State buffer
+        self.state_buffer = []
         
         self.a_range = ros_config.a_range
         self.v_range = ros_config.v_range
@@ -187,8 +204,8 @@ class Agent():
         self.num_covered_targets = num_covered_targets
         
         # Task config
-        self.observe_pos_history = task_config.observe_pos_history
         self.use_gnn = task_config.use_gnn
+        self.observe_pos_history = task_config.observe_pos_history
         self.llm_activate = task_config.llm_activate
         self.mini_grid_radius = task_config.mini_grid_radius
         self.observe_targets = task_config.observe_targets
@@ -241,6 +258,58 @@ class Agent():
             "velocity_n": self.current_vel_n,
             "velocity_e": self.current_vel_e
         }
+    
+    def collect_observation(self):
+        
+        # Get the current state of the agent
+        current_state = self.get_current_state()
+        pos_x, pos_y = convert_ne_to_xy(current_state["position_n"], current_state["position_e"])
+        vel_x, vel_y = convert_ne_to_xy(current_state["velocity_n"], current_state["velocity_e"])
+        pos_x = pos_x / self.node.x_semidim
+        pos_y = pos_y / self.node.y_semidim
+        vel_x = vel_x / (2 * self.node.x_semidim)
+        vel_y = vel_y / (2 * self.node.y_semidim)
+
+        pos = torch.tensor([pos_x, pos_y], device=self.device).unsqueeze(0)
+        vel = torch.tensor([vel_x, vel_y], device=self.device).unsqueeze(0)
+        pos_hist = self.pos_history.get_flattened() if self.observe_pos_history else None
+        
+        obs_components = []
+
+        # Sentence embedding (not logged)
+        if self.llm_activate:
+            obs_components.append(self.grid.observe_embeddings())  # excluded from logging
+
+        # Targets
+        if self.observe_targets:
+            target_obs = self.grid.get_grid_target_observation(pos, self.mini_grid_radius)
+            self.node.get_logger().info(f"Target observation: {target_obs.cpu().numpy()}")
+            obs_components.append(target_obs)
+
+        # Histories
+        if self.observe_pos_history:
+            hist_obs = pos_hist[: pos.shape[0], :]
+            self.node.get_logger().info(f"Position history: {hist_obs.cpu().numpy()}")
+            obs_components.append(hist_obs)
+            self.pos_history.update(pos)
+
+        # Grid Observation
+        grid_obs = self.grid.get_grid_visits_obstacle_observation(pos, self.mini_grid_radius)
+        self.node.get_logger().info(f"Grid visits/obstacles observation: {grid_obs.cpu().numpy()}")
+        obs_components.append(grid_obs)
+
+        # Number of covered targets (if LLM active)
+        if self.llm_activate:
+            obs_components.append(self.num_covered_targets.unsqueeze(1))  # not logged
+
+        # Update State Buffer and Grid
+        obs = torch.cat([comp for comp in obs_components if comp is not None], dim=-1)
+        self.state_buffer.append({"obs": obs, "pos": pos, "vel":vel})
+        # Keep only the most recent `self.state_buffer_length` entries
+        if len(self.state_buffer) > self.state_buffer_length:
+            self.state_buffer = self.state_buffer[-self.state_buffer_length:]
+        self.grid.update(pos)
+        
     
     def compute_action(self):
         # Get the current state of the agent
@@ -445,7 +514,7 @@ class VmasModelsROSInterface(Node):
         self.get_logger().info("ROS2 starting ..")
         
     def _create_occupancy_grid(self):
-        self.occupancy_grid = GeneralPurposeOccupancyGrid(
+        self.occupancy_grid = WorldOccupancyGrid(
             batch_size=1,
             x_dim=self.task_x_semidim*2, # [-1,1]
             y_dim=self.task_y_semidim*2, # [-1,1]
@@ -454,7 +523,6 @@ class VmasModelsROSInterface(Node):
             num_targets_per_class=self.n_targets_per_class,
             visit_threshold=self.grid_visit_threshold,
             embedding_size=self.embedding_size,
-            heading_mini_grid_radius=self.mini_grid_radius*2,
             device=self.device)
         self._covering_range = self.occupancy_grid.cell_radius
     

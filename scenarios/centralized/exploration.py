@@ -16,8 +16,8 @@ if typing.TYPE_CHECKING:
     from vmas.simulator.rendering import Geom
 
 import torch
-from scenarios.scripts.histories import VelocityHistory, PositionHistory, JointPosHistory
-from scenarios.scripts.occupancy_grid import OccupancyGrid
+from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory, JointPosHistory
+from scenarios.grids.occupancy_grid import OccupancyGrid
 from scenarios.old.rewards import CountBasedReward, EntropyBasedReward, JointEntropyBasedReward
 
 class MyScenario(BaseScenario):

@@ -15,7 +15,7 @@ from benchmarl.models.mlp import MlpConfig
 from benchmarl.environments import VmasTask
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from scenarios.scripts.general_purpose_occupancy_grid import GeneralPurposeOccupancyGrid, load_task_data  
+from scenarios.scripts.grids.general_purpose_occupancy_grid import GeneralPurposeOccupancyGrid, load_task_data  
 from scenarios.simple_language_deployment_scenario import MyLanguageScenario
 from scenarios.scripts.histories import VelocityHistory, PositionHistory
 import copy
