@@ -1,53 +1,42 @@
-import rclpy
-from rclpy.node import Node
-
 import sys
-import math
-import signal
 import csv
-from datetime import datetime  # For real-world time logging
+import math
+import copy
+import shutil
+import signal
+import importlib
+from pathlib import Path
+from datetime import datetime
+from typing import List, Callable, Optional
 
-from std_msgs.msg import String
-from std_msgs.msg import UInt8
-sys.path.insert(0, "/home/npfitzer/robomaster_ws/install/freyja_msgs/lib/python3.10/site-packages")
-from freyja_msgs.msg import ReferenceState
-from freyja_msgs.msg import CurrentState
-from freyja_msgs.msg import WaypointTarget
+import torch
+from torchrl.envs import EnvBase, VmasEnv
+from torchrl.envs.utils import ExplorationType, set_exploration_type
+from sentence_transformers import SentenceTransformer
+from omegaconf import DictConfig, OmegaConf
+import hydra
 
 from tensordict import TensorDict
 
-from benchmarl.experiment import ExperimentConfig, Experiment
-from benchmarl.algorithms import MappoConfig
-from benchmarl.models.mlp import MlpConfig
-from benchmarl.models import GnnConfig, SequenceModelConfig
-from benchmarl.environments import VmasTask
+# ROS2
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String, UInt8
+from freyja_msgs.msg import ReferenceState, CurrentState, WaypointTarget
 
-import torch
-import copy
-
-import shutil
-from pathlib import Path
-import hydra
-from omegaconf import DictConfig, OmegaConf
-
-from sentence_transformers import SentenceTransformer
-llm = SentenceTransformer('thenlper/gte-large', device="cpu")
-
-from typing import Callable, Optional
-from benchmarl.environments import VmasTask
-from benchmarl.utils import DEVICE_TYPING
-from torchrl.envs import EnvBase, VmasEnv  
-import sys 
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))) 
+# Local Modules
 from scenarios.grids.world_occupancy_grid import WorldOccupancyGrid
 from scenarios.centralized.multi_agent_llm_exploration import MyLanguageScenario
 from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory
-from torchrl.envs.utils import ExplorationType, set_exploration_type
-import copy
+from benchmarl.environments import VmasTask
+from benchmarl.experiment import ExperimentConfig, Experiment
+from benchmarl.algorithms import MappoConfig
+from benchmarl.models import GnnConfig, SequenceModelConfig
+from benchmarl.models.mlp import MlpConfig
+from benchmarl.utils import DEVICE_TYPING
 
 
-def convert_ne_to_xy(north, east):
+def convert_ne_to_xy(north: float, east: float) -> tuple[float, float]:
     """
     Convert coordinates from north–east (NE) ordering to x–y ordering.
     Here, x corresponds to east and y corresponds to north.
@@ -55,7 +44,7 @@ def convert_ne_to_xy(north, east):
     return east, north
 
 
-def convert_xy_to_ne(x, y):
+def convert_xy_to_ne(x: float, y: float) -> tuple[float, float]:
     """
     Convert coordinates from x–y ordering to north–east (NE) ordering.
     Here, north corresponds to y and east corresponds to x.
@@ -70,8 +59,9 @@ def get_env_fun(
         device: DEVICE_TYPING,
     ) -> Callable[[], EnvBase]:
         config = copy.deepcopy(self.config)
-        if self is VmasTask.NAVIGATION: # This is the only modification we make ....
-            scenario = MyLanguageScenario() # .... ends here
+        # Override scenario for NAVIGATION task to use custom language-based scenario
+        if self is VmasTask.NAVIGATION:
+            scenario = MyLanguageScenario()
         else:
             scenario = self.name.lower()
         return lambda: VmasEnv(
@@ -90,21 +80,10 @@ def _load_experiment_cpu(self):
     self.load_state_dict(loaded_dict)
     return self
 
-import importlib
 def load_class(class_path: str):
     """
     Given a full class path string like 'torch.nn.modules.linear.Linear',
     dynamically load and return the class object.
-
-    Args:
-        class_path (str): Full path to the class.
-
-    Returns:
-        type: The loaded class.
-
-    Raises:
-        ImportError: If the module cannot be imported.
-        AttributeError: If the class does not exist in the module.
     """
     try:
         module_path, class_name = class_path.rsplit('.', 1)
@@ -114,8 +93,7 @@ def load_class(class_path: str):
     except (ImportError, AttributeError) as e:
         raise ImportError(f"Cannot load class '{class_path}': {e}")
 
-
-def get_experiment(config):
+def get_experiment(config: DictConfig) -> Experiment:
     
     VmasTask.get_env_fun = get_env_fun
     Experiment._load_experiment = _load_experiment_cpu
@@ -156,7 +134,7 @@ def get_experiment(config):
     
     return experiment
 
-class Agent():
+class Agent:
     def __init__(
     self,
     node,
@@ -173,14 +151,13 @@ class Agent():
         self.robot_id = robot_id
         self.weight = weight
         
-        # Timer to update and publish commands
-        self.dt = 1.0 / 20.0
+        # Timer to update state
+        self.obs_dt = 1.0 / 20.0
         self.mytime = 0.0
-        self.step_count = 0
-        self.max_steps = 200  # Change as needed
         
         # State buffer
         self.state_buffer = []
+        self.state_buffer_length = 5
         
         self.a_range = ros_config.a_range
         self.v_range = ros_config.v_range
@@ -196,7 +173,7 @@ class Agent():
         self.pos_dim = 2
         self._create_pos_history()
         
-        self.timer = self.node.create_timer(self.dt, self.timer_callback)
+        self.timer = self.node.create_timer(self.obs_dt, self.collect_observation)
         
         # Shared grid
         self.grid = grid
@@ -204,7 +181,6 @@ class Agent():
         self.num_covered_targets = num_covered_targets
         
         # Task config
-        self.use_gnn = task_config.use_gnn
         self.observe_pos_history = task_config.observe_pos_history
         self.llm_activate = task_config.llm_activate
         self.mini_grid_radius = task_config.mini_grid_radius
@@ -232,7 +208,7 @@ class Agent():
         self.node.get_logger().info(f"Robot {self.robot_id} subscribing to: {topic_prefix}{self.robot_id}/current_state")
     
         # Create reference state message
-        self.reference_state = ReferenceState()
+        self.reference_sstate = ReferenceState()
     
     def _create_pos_history(self):  
         self.pos_history = PositionHistory(
@@ -310,134 +286,6 @@ class Agent():
             self.state_buffer = self.state_buffer[-self.state_buffer_length:]
         self.grid.update(pos)
         
-    
-    def compute_action(self):
-        # Get the current state of the agent
-        current_state = self.get_current_state()
-        pos_x, pos_y = convert_ne_to_xy(current_state["position_n"], current_state["position_e"])
-        vel_x, vel_y = convert_ne_to_xy(current_state["velocity_n"], current_state["velocity_e"])
-        pos_x = pos_x / self.node.x_semidim
-        pos_y = pos_y / self.node.y_semidim
-        vel_x = vel_x / (2 * self.node.x_semidim)
-        vel_y = vel_y / (2 * self.node.y_semidim)
-
-        pos = torch.tensor([pos_x, pos_y], device=self.device).unsqueeze(0)
-        vel = torch.tensor([vel_x, vel_y], device=self.device).unsqueeze(0)
-        pos_hist = self.pos_history.get_flattened() if self.observe_pos_history else None
-
-        obs_components = []
-
-        # Sentence embedding (not logged)
-        if self.llm_activate:
-            obs_components.append(self.grid.observe_embeddings())  # excluded from logging
-
-        # Targets
-        if self.observe_targets:
-            target_obs = self.grid.get_grid_target_observation(pos, self.mini_grid_radius)
-            self.node.get_logger().info(f"Target observation: {target_obs.cpu().numpy()}")
-            obs_components.append(target_obs)
-
-        # Histories
-        if self.observe_pos_history:
-            hist_obs = pos_hist[: pos.shape[0], :]
-            self.node.get_logger().info(f"Position history: {hist_obs.cpu().numpy()}")
-            obs_components.append(hist_obs)
-            self.pos_history.update(pos)
-
-        # Grid Observation
-        grid_obs = self.grid.get_grid_visits_obstacle_observation(pos, self.mini_grid_radius)
-        self.node.get_logger().info(f"Grid visits/obstacles observation: {grid_obs.cpu().numpy()}")
-        obs_components.append(grid_obs)
-
-        # Number of covered targets (if LLM active)
-        if self.llm_activate:
-            obs_components.append(self.num_covered_targets.unsqueeze(1))  # not logged
-
-        # Pose
-        if not self.use_gnn:
-            self.node.get_logger().info(f"Normalized position: {pos.cpu().numpy()}")
-            self.node.get_logger().info(f"Normalized velocity: {vel.cpu().numpy()}")
-            obs_components.append(pos)
-            obs_components.append(vel)
-
-        obs = torch.cat([comp for comp in obs_components if comp is not None], dim=-1)
-
-        self.grid.update(pos)
-
-        input_td = TensorDict({
-            ("agents", "observation"): obs.to(dtype=torch.float32, device=self.device)
-        }, batch_size=[1], device=self.device)
-
-        deterministic = True
-        exp_type = (
-            ExplorationType.DETERMINISTIC if deterministic
-            else ExplorationType.RANDOM
-        )
-        
-        #    and run the policy
-        with torch.no_grad(), set_exploration_type(exp_type):
-            output_td = self.node.policy(input_td)
-
-        action = output_td[("agents", "action")]
-        log_prob = output_td[("agents", "log_prob")]
-
-        return action, log_prob
-
-    
-    def timer_callback(self):
-        # Run repeatedly to send commands to the robot
-        if not self.state_received:
-            self.node.get_logger().info("Current state not received yet.")
-            return
-        
-        if self.step_count >= self.max_steps:
-            self.node.get_logger().info(f"Robot {self.robot_id} reached {self.max_steps} steps. Stopping.")
-            self.timer.cancel()
-            self.send_zero_velocity()
-            self.node.notify_agent_stopped(self.robot_id)
-            return
-
-        # Convert current state to model input (x-y ordering)
-        pos_x, pos_y = convert_ne_to_xy(self.current_pos_n, self.current_pos_e)
-        vel_x, vel_y = convert_ne_to_xy(self.current_vel_n, self.current_vel_e)
-
-        cmd_vel, log_prob = self.compute_action()
-        
-        cmd_vel = cmd_vel.tolist()
-
-        # Convert model output back to north-east ordering.
-        # Since the model returns (vx, vy) in x-y order, we convert it back:
-        vel_n, vel_e = convert_xy_to_ne(*cmd_vel[0])
-        #self.reference_state.pn = 0
-        #self.reference_state.pe = 0
-        self.reference_state.vn = vel_n
-        self.reference_state.ve = vel_e
-        self.reference_state.yaw = math.pi / 2
-        self.reference_state.an = self.a_range
-        self.reference_state.ae = self.a_range
-        self.reference_state.header.stamp = self.node.get_clock().now().to_msg()
-
-        # Get the real-world time in ISO format
-        real_time_str = datetime.now().isoformat()
-
-        # Log to console
-        self.node.get_logger().info(
-            f"Robot {self.robot_id} - Commanded velocity ne: {vel_n}, {vel_e} - "
-            f"pos: [{self.current_pos_n}, {self.current_pos_e}] - vel: [{self.current_vel_n}, {self.current_vel_e}]"
-        )
-
-        # Log to CSV file including both simulation time and real-world time
-        self.node.csv_writer.writerow([self.mytime, real_time_str, self.robot_id, self.reference_state.vn, self.reference_state.ve,
-                                  self.current_pos_n, self.current_pos_e, self.current_vel_n, self.current_vel_e])
-        self.node.log_file.flush()
-
-        # Publish the command
-        self.pub.publish(self.reference_state)
-
-        # Update simulation time
-        self.mytime += self.dt
-        self.step_count += 1
-
 
     def send_zero_velocity(self):
         # Send a zero velocity command
@@ -451,10 +299,11 @@ class Agent():
 
 class VmasModelsROSInterface(Node):
 
-    def __init__(self, config: DictConfig, log_dir: Path):
+    def __init__(self, config: DictConfig, log_dir: Path, llm: SentenceTransformer):
         super().__init__("vmas_ros_interface")
         self.sentence = "Team, locate the target in the south east corner of the room."
         self.device = config.device
+        self.llm = llm
 
         self.agents_done = set()
         
@@ -467,6 +316,7 @@ class VmasModelsROSInterface(Node):
         self.task_y_semidim = config["task_config"].value.y_semidim
         self.embedding_size = config["task_config"].value.embedding_size
 
+        self.use_gnn = config["task_config"].value.use_gnn
         self.num_grid_cells = config["task_config"].value.num_grid_cells
         self.mini_grid_radius = config["task_config"].value.mini_grid_radius
         self.n_target_classes = config["task_config"].value.n_target_classes
@@ -495,11 +345,11 @@ class VmasModelsROSInterface(Node):
         # Create Agents
         self.n_agents = config["task_config"].value.n_agents
         self.observe_pos_history = config["task_config"].value.observe_pos_history
-        self.agents = []
+        self.agents: List[Agent] = []
         for i in range(self.n_agents):
             agent = Agent(
                 node=self,
-                robot_id=6,
+                robot_id=i,
                 weight=self.agent_weight,
                 pos_history_length=self.pos_history_length,
                 grid=self.occupancy_grid,
@@ -510,7 +360,12 @@ class VmasModelsROSInterface(Node):
             )
             self.agents.append(agent)
         
-        self.prompt_for_new_instruction()
+        # Create action loop
+        self.action_dt = 1.0 / 10.0
+        self.step_count = 0
+        self.max_steps = 200
+        self.timer = self.create_timer(self.action_dt, self.timer_callback)
+        
         self.get_logger().info("ROS2 starting ..")
         
     def _create_occupancy_grid(self):
@@ -526,32 +381,126 @@ class VmasModelsROSInterface(Node):
             device=self.device)
         self._covering_range = self.occupancy_grid.cell_radius
     
+    def timer_callback(self):
+        # Run repeatedly to send commands to the robot
+        if not all(agent.state_received for agent in self.agents):
+            self.get_logger().info("Waiting for all agents to receive state.")
+            return
+        
+        if self.step_count >= self.max_steps:
+            self.get_logger().info(f"Robots reached {self.max_steps} steps. Stopping.")
+            self.timer.cancel()
+            self.stop_all_agents()
+            self.prompt_for_new_instruction()
+            return
+        
+        # Collect Agent observations
+        obs_list = []
+        pos_list = []
+        vel_list = []
+
+        for agent in self.agents:
+            if not agent.state_buffer:
+                self.get_logger().warn(f"No state in buffer for agent {agent.robot_id}")
+                continue
+
+            latest_state = agent.state_buffer.pop()
+            obs = latest_state["obs"]
+            pos = latest_state["pos"]
+            vel = latest_state["vel"]
+
+            if self.use_gnn:
+                obs_list.append(obs)
+                pos_list.append(pos)
+                vel_list.append(vel)
+            else:
+                obs_with_pos_vel = torch.cat([obs, pos, vel], dim=-1)
+                obs_list.append(obs_with_pos_vel)
+
+        obs_tensor = torch.cat(obs_list, dim=0)
+
+        if self.use_gnn:
+            positions = torch.cat(pos_list, dim=0)
+            velocities = torch.cat(vel_list, dim=0)
+            input_td = TensorDict({
+                ("agents", "observation", "obs"): obs_tensor,
+                ("agents", "observation", "pos"): positions,
+                ("agents", "observation", "vel"): velocities,
+            }, batch_size=[len(obs_list)])
+        else:
+            input_td = TensorDict({
+                ("agents", "observation"): obs_tensor,
+            }, batch_size=[len(obs_list)])
+        
+        with torch.no_grad(), set_exploration_type(ExplorationType.DETERMINISTIC):
+                output_td = self.policy(input_td)
+
+        action = output_td[("agents", "action")]
+        log_prob = output_td[("agents", "log_prob")]
+
+        for i, agent in enumerate(self.agents):
+            
+            cmd_vel = action[i,:]
+            cmd_vel = cmd_vel.tolist()
+
+            # Convert model output back to north-east ordering.
+            # Since the model returns (vx, vy) in x-y order, we convert it back:
+            vel_n, vel_e = convert_xy_to_ne(*cmd_vel)
+            #self.reference_state.pn = 0
+            #self.reference_state.pe = 0
+            agent.reference_state.vn = vel_n
+            agent.reference_state.ve = vel_e
+            agent.reference_state.yaw = math.pi / 2
+            agent.reference_state.an = agent.a_range
+            agent.reference_state.ae = agent.a_range
+            agent.reference_state.header.stamp = self.get_clock().now().to_msg()
+
+            # Get the real-world time in ISO format
+            real_time_str = datetime.now().isoformat()
+
+            # Log to console
+            self.get_logger().info(
+                f"Robot {agent.robot_id} - Commanded velocity ne: {vel_n}, {vel_e} - "
+                f"pos: [{agent.current_pos_n}, {agent.current_pos_e}] - vel: [{agent.current_vel_n}, {agent.current_vel_e}]"
+            )
+
+            # Log to CSV file including both simulation time and real-world time
+            self.csv_writer.writerow([agent.mytime, real_time_str, agent.robot_id, agent.reference_state.vn, agent.reference_state.ve,
+                                    agent.current_pos_n, agent.current_pos_e, agent.current_vel_n, agent.current_vel_e])
+            self.log_file.flush()
+
+            # Publish the command
+            agent.pub.publish(agent.reference_state)
+
+        # Update simulation time
+        agent.mytime += self.action_dt
+        self.step_count += 1
+    
     def stop_all_agents(self):
         for agent in self.agents:
             agent.timer.cancel()
             agent.send_zero_velocity()
     
-    def notify_agent_stopped(self, robot_id):
-        self.agents_done.add(robot_id)
-        if len(self.agents_done) == self.n_agents:
-            self.get_logger().info("All agents stopped after 200 steps.")
-            self.prompt_for_new_instruction()
-    
     def prompt_for_new_instruction(self):
         new_sentence = input("Enter a new instruction for the agents: ")
-        embedding = torch.tensor(llm.encode([new_sentence]), device=self.device).squeeze(0)
+        try:
+            embedding = torch.tensor(self.llm.encode([new_sentence]), device=self.device).squeeze(0)
+        except Exception as e:
+            self.get_logger().error(f"Failed to encode instruction: {e}")
+            return
         self.occupancy_grid.embeddings[0] = embedding
 
-        # Reset agent step counts and restart timers
+        # Reset step count and restart timers
+        self.step_count = 0
         for agent in self.agents:
-            agent.step_count = 0
+            agent.mytime = 0
             agent.timer.reset()  # or create a new timer if needed
         self.agents_done.clear()
         self.get_logger().info("Starting agents with new instruction.")
 
 
 
-@hydra.main(config_path="/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration/checkpoints/benchmarl/single_agent_first/", 
+@hydra.main(config_path="/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration/checkpoints/benchmarl/gnn_multi_agent_first/", 
             config_name="benchmarl_mappo", version_base="1.1")
 def main(config: DictConfig):
     rclpy.init()
@@ -563,17 +512,21 @@ def main(config: DictConfig):
     log_dir.mkdir(parents=True, exist_ok=True)
 
     # Copy all .py files and config to runtime dir
-    for src in Path('./src/RoboMasterROSPackage/andy_controller').rglob("*.py"):
+    for src in Path('./src/LanguageDrivenExploration/deployment').rglob("*.py"):
         dst = log_dir / src.name
         shutil.copy2(src, dst)
-    for src in Path("./config").rglob("*.yaml"):
+    for src in Path("./src/LanguageDrivenExploration/checkpoints/benchmarl/gnn_multi_agent/first").rglob("*.yaml"):
         dst = log_dir / src.name
         shutil.copy2(src, dst)
+        
+    llm = SentenceTransformer("thenlper/gte-large", device="cpu")
 
     ros_interface_node = VmasModelsROSInterface(
         config=config,
-        log_dir=log_dir
+        log_dir=log_dir,
+        llm=llm
     )
+    ros_interface_node.prompt_for_new_instruction()
 
     def sigint_handler(sig, frame):
         ros_interface_node.get_logger().info('SIGINT received. Stopping timer and sending zero velocity...')
