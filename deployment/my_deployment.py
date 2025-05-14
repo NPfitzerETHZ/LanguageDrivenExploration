@@ -1,4 +1,5 @@
 import sys
+import os
 import csv
 import math
 import copy
@@ -22,9 +23,13 @@ from tensordict import TensorDict
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String, UInt8
-from freyja_msgs.msg import ReferenceState, CurrentState, WaypointTarget
+sys.path.insert(0, "/home/npfitzer/robomaster_ws/install/freyja_msgs/lib/python3.10/site-packages")
+from freyja_msgs.msg import ReferenceState
+from freyja_msgs.msg import CurrentState
+from freyja_msgs.msg import WaypointTarget
 
 # Local Modules
+sys.path.insert(0, "/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration")
 from scenarios.grids.world_occupancy_grid import WorldOccupancyGrid
 from scenarios.centralized.multi_agent_llm_exploration import MyLanguageScenario
 from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory
@@ -102,7 +107,7 @@ def get_experiment(config: DictConfig) -> Experiment:
     print(config["experiment_config"].value)
     
     experiment_config = ExperimentConfig(**config["experiment_config"].value)
-    experiment_config.restore_file = str("/Users/nicolaspfitzer/ProrokLab/CustomScenarios/checkpoints/benchmarl/gnn_multi_agent_first/gnn_multi_agent_llm_deployment.pt")
+    experiment_config.restore_file = str("/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration/checkpoints/benchmarl/gnn_multi_agent_first/gnn_multi_agent_llm_deployment.pt")
     task = VmasTask.NAVIGATION.get_from_yaml()
     task.config = config["task_config"].value
     algorithm_config = MappoConfig(**config["algorithm_config"].value)
@@ -152,7 +157,7 @@ class Agent:
         self.weight = weight
         
         # Timer to update state
-        self.obs_dt = 1.0 / 20.0
+        self.obs_dt = 1.0 / 50.0
         self.mytime = 0.0
         
         # State buffer
@@ -208,7 +213,7 @@ class Agent:
         self.node.get_logger().info(f"Robot {self.robot_id} subscribing to: {topic_prefix}{self.robot_id}/current_state")
     
         # Create reference state message
-        self.reference_sstate = ReferenceState()
+        self.reference_state = ReferenceState()
     
     def _create_pos_history(self):  
         self.pos_history = PositionHistory(
@@ -285,7 +290,6 @@ class Agent:
         if len(self.state_buffer) > self.state_buffer_length:
             self.state_buffer = self.state_buffer[-self.state_buffer_length:]
         self.grid.update(pos)
-        
 
     def send_zero_velocity(self):
         # Send a zero velocity command
@@ -346,10 +350,11 @@ class VmasModelsROSInterface(Node):
         self.n_agents = config["task_config"].value.n_agents
         self.observe_pos_history = config["task_config"].value.observe_pos_history
         self.agents: List[Agent] = []
+        id_list = [3,4,6,7]
         for i in range(self.n_agents):
             agent = Agent(
                 node=self,
-                robot_id=i,
+                robot_id=id_list[i],
                 weight=self.agent_weight,
                 pos_history_length=self.pos_history_length,
                 grid=self.occupancy_grid,
@@ -371,8 +376,10 @@ class VmasModelsROSInterface(Node):
     def _create_occupancy_grid(self):
         self.occupancy_grid = WorldOccupancyGrid(
             batch_size=1,
-            x_dim=self.task_x_semidim*2, # [-1,1]
-            y_dim=self.task_y_semidim*2, # [-1,1]
+            x_dim=2, # [-1,1]
+            y_dim=2, # [-1,1]
+            x_scale=self.x_semidim,
+            y_scale=self.y_semidim,
             num_cells=self.num_grid_cells,
             num_targets=self.n_target_classes * self.n_targets_per_class,
             num_targets_per_class=self.n_targets_per_class,
@@ -405,17 +412,22 @@ class VmasModelsROSInterface(Node):
                 continue
 
             latest_state = agent.state_buffer.pop()
-            obs = latest_state["obs"]
-            pos = latest_state["pos"]
-            vel = latest_state["vel"]
+            obs = latest_state["obs"].to(torch.float32)
+            pos = latest_state["pos"].to(torch.float32)
+            vel = latest_state["vel"].to(torch.float32)
 
             if self.use_gnn:
                 obs_list.append(obs)
                 pos_list.append(pos)
                 vel_list.append(vel)
             else:
-                obs_with_pos_vel = torch.cat([obs, pos, vel], dim=-1)
+                obs_with_pos_vel = torch.cat([obs, pos, vel], dim=-1).to(torch.float32)
                 obs_list.append(obs_with_pos_vel)
+
+        
+        if not obs_list:
+            self.get_logger().warn("No valid observations collected. Skipping this timestep.")
+            return
 
         obs_tensor = torch.cat(obs_list, dim=0)
 
