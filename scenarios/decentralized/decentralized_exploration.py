@@ -14,12 +14,9 @@ from vmas.simulator.scenario import BaseScenario
 if typing.TYPE_CHECKING:
     from vmas.simulator.rendering import Geom
 
-from scenarios.myscenario import MyScenario
-from scenarios.old.dead_end import DeadEndOccupancyGrid
-from scenarios.scripts.heading import HeadingOccupancyGrid
-from scenarios.scripts.world_occupancy_grid import WorldOccupancyGrid, CoreOccupancyGrid, load_task_data, load_decoder
-from scenarios.scripts.observation import observation
-from scenarios.scripts.rewards import compute_reward
+from scenarios.grids.world_occupancy_grid import WorldOccupancyGrid, CoreOccupancyGrid, load_task_data, load_decoder
+from scenarios.decentralized.scripts.observation import observation
+from scenarios.decentralized.scripts.rewards import compute_reward
 
 color_dict = {
     "red":      {"rgb": [1.0, 0.0, 0.0], "index": 0},

@@ -2,7 +2,7 @@ import random
 import torch
 import numpy as np
 import json
-from scenarios.scripts.core_occupancy_grid import CoreOccupancyGrid, TARGET, OBSTACLE, VISITED
+from scenarios.grids.core_occupancy_grid import CoreOccupancyGrid, TARGET, OBSTACLE, VISITED
 from vmas.simulator.core import Landmark
 import torch.nn as nn
 import torch.nn.functional as F
@@ -128,8 +128,8 @@ def apply_density_diffusion(grid, kernel_size=3, sigma=1.0):
 
 class WorldOccupancyGrid(CoreOccupancyGrid):
     
-    def __init__(self, x_dim, y_dim, num_cells, batch_size, num_targets, num_targets_per_class, visit_threshold, embedding_size, world_grid=True, device='cpu'):
-        super().__init__(x_dim, y_dim, num_cells, visit_threshold, batch_size, num_targets, embedding_size, device)
+    def __init__(self, x_dim, y_dim, x_scale, y_scale, num_cells, batch_size, num_targets, num_targets_per_class, visit_threshold, embedding_size, world_grid=True, device='cpu'):
+        super().__init__(x_dim, y_dim, x_scale, y_scale, num_cells, visit_threshold, batch_size, num_targets, embedding_size, device)
 
         self.world_grid = world_grid
         if self.world_grid:
@@ -256,10 +256,11 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
         rand_values = torch.rand(packet_size, grid_size, device=self.device)
         
         # Filter Heading Targets and agents out of randomization
-        agent_sample_start = torch.randint(0, grid_size - n_agents, (packet_size,), device=self.device)
-        agent_sample_range = torch.arange(0, n_agents, device=self.device).view(1, -1) + agent_sample_start.view(-1, 1)  # Shape: (packet_size, n_agents)
-        agent_batch_indices = torch.arange(packet_size, device=self.device).view(-1, 1).expand_as(agent_sample_range)
-        rand_values[agent_batch_indices, agent_sample_range] = LARGE
+        # Agents in line:
+        # agent_sample_start = torch.randint(0, grid_size - n_agents, (packet_size,), device=self.device)
+        # agent_sample_range = torch.arange(0, n_agents, device=self.device).view(1, -1) + agent_sample_start.view(-1, 1)  # Shape: (packet_size, n_agents)
+        # agent_batch_indices = torch.arange(packet_size, device=self.device).view(-1, 1).expand_as(agent_sample_range)
+        # rand_values[agent_batch_indices, agent_sample_range] = LARGE
         for j, mask in unknown_targets.items():
             for t in range(self.num_targets_per_class):
                 vec = target_poses[~mask,j,t]
@@ -270,7 +271,9 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
         # Extract obstacle and agent indices
         sort_indices = torch.argsort(rand_values, dim=1)
         obstacle_indices = sort_indices[:, :n_obstacles]  # First n_obstacles indices
-        agent_indices = sort_indices[:, -n_agents:]
+        #agent_indices = sort_indices[:, -n_agents:]
+        # Random Agents
+        agent_indices = sort_indices[:, n_obstacles:n_obstacles+n_agents]
         
         # Convert flat indices to (x, y) grid coordinates
         obstacle_grid_x = (obstacle_indices % self.grid_width).view(packet_size, n_obstacles, 1)
@@ -295,7 +298,7 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
         for j, mask in unknown_targets.items():
             target_poses[mask,j,:] = target_center[mask,t:t+self.num_targets_per_class]
             self.grid_targets[env_index[mask], target_grid_y[mask,t:t+self.num_targets_per_class]+pad, target_grid_x[mask,t:t+self.num_targets_per_class]+pad] = (TARGET + j)
-            self.grid_visits_sigmoid[env_index[mask], target_grid_y[mask,t:t+self.num_targets_per_class]+pad, target_grid_x[mask,t:t+self.num_targets_per_class]+pad] = 1.0
+            #self.grid_visits_sigmoid[env_index[mask], target_grid_y[mask,t:t+self.num_targets_per_class]+pad, target_grid_x[mask,t:t+self.num_targets_per_class]+pad] = 1.0
             t += self.num_targets_per_class
         
         return agent_centers, obstacle_centers, target_poses
@@ -366,7 +369,7 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
                         vec = self.get_target_pose_in_heading(envs,envs.numel())
                         # Place the target in the grid (and mark as visited, this a test)
                         self.grid_targets[envs, vec[:,1].unsqueeze(1).int(), vec[:,0].unsqueeze(1).int()] = (TARGET + j)
-                        self.grid_visits_sigmoid[envs, vec[:,1].unsqueeze(1).int(), vec[:,0].unsqueeze(1).int()] = 1.0
+                        #self.grid_visits_sigmoid[envs, vec[:,1].unsqueeze(1).int(), vec[:,0].unsqueeze(1).int()] = 1.0
                         # Compute Gaussian Heading
                         self.gaussian_heading(envs,t,vec,heading_sigma_coef)
                         # Store world position

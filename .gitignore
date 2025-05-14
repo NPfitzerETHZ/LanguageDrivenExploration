@@ -26,4 +26,5 @@ experiments*
 wandb*
 data/
 decoders/
+checkpoints*
 outputs*

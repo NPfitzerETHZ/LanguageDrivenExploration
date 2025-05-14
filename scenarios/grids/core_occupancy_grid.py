@@ -14,10 +14,13 @@ VISITED_TARGET= -1
 
 class CoreOccupancyGrid:
 
-    def __init__(self, x_dim, y_dim, num_cells, visit_threshold, batch_size, num_targets, embedding_size, device='cpu'):
+    def __init__(self, x_dim, y_dim, x_scale, y_scale, num_cells, visit_threshold, batch_size, num_targets, embedding_size, device='cpu'):
 
-        self.x_dim = x_dim  # World width
-        self.y_dim = y_dim  # World height
+        self.x_dim = x_dim  # World width normalized
+        self.y_dim = y_dim  # World height normalized
+        self.x_scale = x_scale # World width scale
+        self.y_scale = y_scale # World height scale
+        
         self.num_cells = num_cells  # Total number of grid cells
         self.device = device
         self.batch_size = batch_size
@@ -61,11 +64,11 @@ class CoreOccupancyGrid:
         Ensures that the world origin (0,0) maps exactly to the center of the occupancy grid.
         """
         if padding: 
-            grid_x = torch.round((pos[..., 0] / self.cell_size_x) + (self.grid_width - 1) / 2).int().clamp(0, self.grid_width - 1) + 1
-            grid_y = torch.round((pos[..., 1] / self.cell_size_y) + (self.grid_height - 1) / 2).int().clamp(0, self.grid_height - 1) + 1
+            grid_x = torch.round((pos[..., 0] / (self.cell_size_x * self.x_scale)) + (self.grid_width - 1) / 2).int().clamp(0, self.grid_width - 1) + 1
+            grid_y = torch.round((pos[..., 1] / (self.cell_size_y * self.y_scale)) + (self.grid_height - 1) / 2).int().clamp(0, self.grid_height - 1) + 1
         else:
-            grid_x = torch.round((pos[..., 0] / self.cell_size_x) + (self.grid_width - 1) / 2).int().clamp(0, self.grid_width - 1)
-            grid_y = torch.round((pos[..., 1] / self.cell_size_y) + (self.grid_height - 1) / 2).int().clamp(0, self.grid_height - 1)
+            grid_x = torch.round((pos[..., 0] / (self.cell_size_x * self.x_scale)) + (self.grid_width - 1) / 2).int().clamp(0, self.grid_width - 1)
+            grid_y = torch.round((pos[..., 1] / (self.cell_size_y * self.y_scale)) + (self.grid_height - 1) / 2).int().clamp(0, self.grid_height - 1)
 
         return grid_x, grid_y
     
@@ -82,8 +85,8 @@ class CoreOccupancyGrid:
         Returns:
             torch.Tensor: World coordinates (x, y).
         """
-        world_x = (grid_x - (self.grid_width - 1) / 2) * self.cell_size_x
-        world_y = (grid_y - (self.grid_height - 1) / 2) * self.cell_size_y
+        world_x = (grid_x - (self.grid_width - 1) / 2) * self.cell_size_x * self.x_scale
+        world_y = (grid_y - (self.grid_height - 1) / 2) * self.cell_size_y * self.y_scale
 
         return torch.stack((world_x, world_y), dim=-1)
         

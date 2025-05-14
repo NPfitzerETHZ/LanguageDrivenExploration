@@ -7,15 +7,16 @@ import random
 
 from vmas import render_interactively
 from vmas.simulator.core import Agent,Landmark, Sphere, Box, World, Line
-from vmas.simulator.utils import Color, ScenarioUtils
+from vmas.simulator.utils import Color, ScenarioUtils, TorchUtils
 
 if typing.TYPE_CHECKING:
     from vmas.simulator.rendering import Geom
 
 from scenarios.myscenario import MyScenario
 from scenarios.old.dead_end import DeadEndOccupancyGrid
-from scenarios.scripts.heading import HeadingOccupancyGrid
-from scenarios.scripts.general_purpose_occupancy_grid import GeneralPurposeOccupancyGrid, load_task_data, load_decoder
+from scenarios.scripts.grids.heading_grid import HeadingOccupancyGrid
+from scenarios.scripts.grids.general_purpose_occupancy_grid import GeneralPurposeOccupancyGrid, load_task_data, load_decoder
+
 
 # color_dict = {
 #     "red":      {"rgb": [1.0, 0.0, 0.0], "index": 0},
@@ -55,14 +56,17 @@ class MyLanguageScenario(MyScenario):
         self._initialize_scenario_vars(batch_dim)
         world = self._create_world(batch_dim)
         self._create_occupancy_grid(batch_dim)
-        self._create_agents(world, batch_dim)
+        self._create_agents(world, batch_dim, self.use_velocity_controller, silent = self.comm_dim == 0)
         self._create_targets(world)
         self._create_obstacles(world)
         self._initialize_rewards(batch_dim)
         return world
     
     def _load_scenario_config(self,kwargs):
-
+        
+        self.agent_weight = kwargs.pop("agent_weight", 1.0)
+        self.agent_max_speed = kwargs.pop("agent_max_speed", 4.5)
+        self.use_velocity_controller = kwargs.pop("use_velocity_controller", True)
         self.data_json_path = kwargs.pop("data_json_path", "")
         self.decoder_model_path = kwargs.pop("decoder_model_path", "")
         self.use_decoder = kwargs.pop("use_decoder", False)
@@ -74,33 +78,40 @@ class MyLanguageScenario(MyScenario):
         self.n_agents = kwargs.pop("n_agents", 6)
 
         self.use_gnn = kwargs.pop("use_gnn", False)
+        self.comm_dim = kwargs.pop("comm_dim", 1)
         self._comms_range = kwargs.pop("comms_radius", 0.35)
-        self.agent_radius = kwargs.pop("agent_radius", 0.025)
+        self.agent_radius = kwargs.pop("agent_radius", 0.01)
 
         self.use_lidar = kwargs.pop("use_lidar", False)
         self.use_agent_lidar = kwargs.pop("use_agent_lidar", False)
         self.use_obstacle_lidar = kwargs.pop("use_obstacle_lidar", False)
         self.add_obstacles = kwargs.pop("add_obstacles", True)  # This isn't implemented yet
 
-        # Novelty rewards
-        self.use_count_rew = kwargs.pop("use_count_rew", False)
-        self.use_entropy_rew = kwargs.pop("use_entropy_rew", False)
-        self.use_jointentropy_rew = kwargs.pop("use_jointentropy_rew", False)
         self.use_occupancy_grid_rew = kwargs.pop("use_occupency_grid_rew", True)
+        self.use_occupancy_grid_obs = kwargs.pop("use_occupency_grid_obs", True)
         self.use_expo_search_rew = kwargs.pop("use_expo_search_rew", True)
+        self.grid_visit_threshold = kwargs.pop("grid_visit_threshold", 3)
 
-        self.agent_collision_penalty = kwargs.pop("agent_collision_penalty", 0.00)
+        self.agent_collision_penalty = kwargs.pop("agent_collision_penalty", -0.5)
         self.obstacle_collision_penalty = kwargs.pop("obstacle_collision_penalty", -0.5)
-        self.covering_rew_coeff = kwargs.pop("covering_rew_coeff", 3.0) # Large-ish reward for finding a target
+        self.covering_rew_coeff = kwargs.pop("covering_rew_coeff", 5.0) # Large-ish reward for finding a target
         self.false_covering_penalty_coeff = kwargs.pop("false_covering_penalty_coeff", -0.25) # Penalty for covering wrong target if hinted
-        self.time_penalty = kwargs.pop("time_penalty", -0.01)
+        self.time_penalty = kwargs.pop("time_penalty", -0.05)
         self.terminal_rew_coeff = kwargs.pop("terminal_rew_coeff", 15.0) # Large reward for finding max_targets
         self.exponential_search_rew = kwargs.pop("exponential_search_rew_coeff", 1.5)
-        self.oneshot_coeff = kwargs.pop("oneshot_coeff", -10.0)
-        self.exploration_rew_coeff = kwargs.pop("exploration_rew_coeff", -0.01)
-        self.new_cell_rew_coeff = kwargs.pop("new_cell_rew_coeff", 0.125)
-        self.heading_exploration_rew_coeff = kwargs.pop("heading_exploration_rew_coeff", 0.5)
-        self.heading_sigma = kwargs.pop("heading_sigma", 3.0)
+        self.oneshot_coeff = kwargs.pop("oneshot_coeff", -5.0)
+    
+        
+        # Rewards for exploration
+            # 1) Penalty for not exploring (staying in the same cell)
+            # 2) Reward for exploring a new cell
+            # 3) Reward for exploring a cell within a heading region
+        self.exploration_rew_coeff = kwargs.pop("exploration_rew_coeff", -0.05)
+        self.new_cell_rew_coeff = kwargs.pop("new_cell_rew_coeff", 0.0)
+        self.heading_exploration_rew_coeff = kwargs.pop("heading_exploration_rew_coeff", 20.0)
+        self.heading_sigma_coef = kwargs.pop("heading_sigma_coef", 0.15) # Ratio of grid size
+        self.heading_curriculum = kwargs.pop("heading_curriculum", 0.00) # Ratio of grid size
+        self.history_length = kwargs.pop("history_length", 2)
 
         #===================
         # Language Driven Goals
@@ -113,6 +124,7 @@ class MyLanguageScenario(MyScenario):
         # 3) Attribute
         self.target_attribute_objective = kwargs.pop("target_attribute_objective", False)
         self.n_target_classes = kwargs.pop("n_target_classes", 2)
+        self.embedding_size = kwargs.pop("embedding_size", 1024)
         self.n_targets = self.n_target_classes * self.n_targets_per_class
         
         # *** Actually Using LLM ***
@@ -127,19 +139,21 @@ class MyLanguageScenario(MyScenario):
         self.observe_grid = kwargs.pop("observe_grid",True)
         self.num_grid_cells = kwargs.pop("num_grid_cells", 400) # Must be n^2 with n = width 
         self.mini_grid_radius = kwargs.pop("mini_grid_radius", 1) # Radius of the mini grid
+        self.observe_targets = kwargs.pop("observe_targets", True)
 
         self.plot_grid = True
         self.visualize_semidims = False
 
         # Histories
-        self.pos_history_length = 4
         self.pos_dim = 2
+        self.pos_history_length = self.history_length
         self.observe_pos_history = kwargs.pop("observe_pos_history", True)
+        self.observe_vel_history = False
 
     def _create_occupancy_grid(self, batch_dim):
         
         # Initialize Important Stuff
-        if self.use_decoder: load_decoder(self.decoder_model_path, self.device)
+        if self.use_decoder: load_decoder(self.decoder_model_path, self.embedding_size, self.device)
         if self.llm_activate: load_task_data(
             json_path=self.data_json_path,
             use_decoder=self.use_decoder,
@@ -150,11 +164,12 @@ class MyLanguageScenario(MyScenario):
         self.occupancy_grid = GeneralPurposeOccupancyGrid(
             batch_size=batch_dim,
             x_dim=self.x_semidim*2,
-            y_dim=self.y_semidim*2,
+            y_dim=self.x_semidim*2, 
             num_cells=self.num_grid_cells,
             num_targets=self.n_targets,
             num_targets_per_class=self.n_targets_per_class,
-            heading_mini_grid_radius=self.mini_grid_radius*2,
+            visit_threshold=self.grid_visit_threshold,
+            embedding_size=self.embedding_size,
             device=self.device)
         self._covering_range = self.occupancy_grid.cell_radius
 
@@ -199,6 +214,9 @@ class MyLanguageScenario(MyScenario):
             self.target_colors[target_class_idx] = torch.tensor(rgb, device=self.device)
         
         self.step_count = 0
+        
+        # Coverage action
+        self.coverage_action = {}
     
     def reset_world_at(self, env_index = None):
         """Reset the world for a given environment index."""
@@ -283,7 +301,7 @@ class MyLanguageScenario(MyScenario):
 
         #obs_poses, agent_poses, _ = self.occupancy_grid.spawn_map(env_index,self.n_obstacles,self.n_agents,n_targets,self.target_class)
         obs_poses, agent_poses, target_poses = self.occupancy_grid.spawn_llm_map(
-            env_index, self.n_obstacles, self.n_agents, self.target_groups, self.target_class, self.max_target_count,heading_sigma=self.heading_sigma
+            env_index, self.n_obstacles, self.n_agents, self.target_groups, self.target_class, self.max_target_count,heading_sigma_coef=self.heading_sigma_coef
         )
 
         for i, idx in enumerate(env_index):
@@ -316,27 +334,33 @@ class MyLanguageScenario(MyScenario):
         self._compute_collisions(agent)
         pos = agent.state.pos
         exploration_rew = torch.zeros(self.world.batch_dim, device=self.world.device)
+        coverage_rew = torch.zeros(self.world.batch_dim, device=self.world.device)
         
         # Reward for finding unexplored cells or a heading cell
         if self.use_occupancy_grid_rew:
             if (self.global_heading_objective or self.llm_activate):
-                exploration_rew += self.occupancy_grid.compute_gaussian_heading_bonus(pos, heading_exploration_rew_coeff=self.heading_exploration_rew_coeff)
+                exploration_rew += self.occupancy_grid.compute_region_heading_bonus_normalized(pos, heading_exploration_rew_coeff=self.heading_exploration_rew_coeff)
             exploration_rew += self.occupancy_grid.compute_exploration_bonus(pos, exploration_rew_coeff=self.exploration_rew_coeff, new_cell_rew_coeff=self.new_cell_rew_coeff)
             self.occupancy_grid.update(pos)
+            self.occupancy_grid.update_heading_coverage_ratio()
+            if self.comm_dim > 0:
+                coverage_rew = self.occupancy_grid.compute_coverage_ratio_bonus(self.coverage_action[agent.name])
+            
         
-        self.num_covered_targets = self.all_time_covered_targets[torch.arange(0,self.world.batch_dim, device = self.device),self.target_class].sum(dim=-1)
+        if self.n_targets > 0:
+            self.num_covered_targets = self.all_time_covered_targets[torch.arange(0,self.world.batch_dim, device = self.device),self.target_class].sum(dim=-1)
             
         # Reward for finding an aditional target grows exponentially - Why? Because the exploration effort increases
         if self.use_expo_search_rew:
             self.covering_rew_val = torch.exp(self.exponential_search_rew*(self.num_covered_targets + 1) / self.max_target_count) + (self.covering_rew_coeff - 1)
         
-        reward = agent.collision_rew + self.time_penalty + (covering_rew + exploration_rew) * (1 - 2 * self.oneshot_signal)  # All postive rewards are inverted once oneshot is on
+        reward = agent.collision_rew + (covering_rew + exploration_rew + self.time_penalty) * (1 - self.oneshot_signal) + coverage_rew  # All postive rewards are inverted once oneshot is on
         
         # Reward applied to the whole team
         if is_first:
             
             # Check if a heading is found, update accordingly
-            if self.global_heading_objective or self.llm_activate:
+            if self.n_targets > 0 and (self.global_heading_objective or self.llm_activate):
                 self.occupancy_grid.update_multi_target_gaussian_heading(self.all_time_covered_targets,self.target_class)
             
             # Collision Penalty
@@ -372,7 +396,11 @@ class MyLanguageScenario(MyScenario):
             lidar_measures = torch.cat(lidar_measures,dim=-1)
 
         # Collect normalized position and velocity and get history if enabled
-        pos, vel = agent.state.pos / torch.tensor([self.x_semidim, self.y_semidim], device=self.device), agent.state.vel
+        # Normalize position to [-1, 1]
+        pos = agent.state.pos / torch.tensor([self.x_semidim, self.y_semidim], device=self.device)
+        # Normalize velocity to units of "fraction of map per timestep"
+        vel = agent.state.vel / torch.tensor([2 * self.x_semidim, 2 * self.y_semidim], device=self.device)
+
         pos_hist = agent.position_history.get_flattened() if self.observe_pos_history else None
         vel_hist = agent.velocity_history.get_flattened() if self.observe_vel_history else None
 
@@ -384,35 +412,29 @@ class MyLanguageScenario(MyScenario):
             obs_components.append(self.occupancy_grid.observe_embeddings())
             
         # Targets
-        obs_components.append(self.occupancy_grid.get_grid_target_observation(pos,self.mini_grid_radius))
-        
+        if self.observe_targets:
+            obs_components.append(self.occupancy_grid.get_grid_target_observation(pos,self.mini_grid_radius))
+
         # Histories
         if self.observe_pos_history:
             obs_components.append(pos_hist[: pos.shape[0], :])
             agent.position_history.update(pos)
+            
         if self.observe_vel_history:
             obs_components.append(vel_hist[: vel.shape[0], :])
             agent.velocity_history.update(vel)
-            
-        # Targeted attribute  
-        if self.target_attribute_objective: # or not self.occupancy_grid.target_attribute_embedding_found:
-            obs_components.append(self.target_class.unsqueeze(1))
             
         # Max number of targets and Current count (maybe there's a better way for this)
         if self.max_target_objective:
             obs_components.append(self.max_target_count.unsqueeze(1))
             obs_components.append(self.num_covered_targets.unsqueeze(1))
-        
-        # Heading Observation    
-        if self.global_heading_objective:
-            obs_components.append(self.occupancy_grid.get_heading_distance_observation(pos))
             
         # Grid Observation (Check out observation_grid.py/heading.py for different options)
-        if self.use_occupancy_grid_rew:
+        if self.use_occupancy_grid_obs:
             obs_components.append(self.occupancy_grid.get_grid_visits_obstacle_observation(pos,self.mini_grid_radius))
 
         # Current covered count for exponential search (increasing reward)
-        if self.use_expo_search_rew or self.llm_activate:
+        if (self.use_expo_search_rew or self.llm_activate):
             obs_components.append(self.num_covered_targets.unsqueeze(1))
         
         # Lidar measurements    
@@ -496,14 +518,25 @@ class MyLanguageScenario(MyScenario):
             self.false_covering_penalty_coeff -= 0.25
             # Progressively decrease the size of the heading region
             # This is to promote faster convergence to the target.
-            if self.heading_sigma > 1.0:
-                self.heading_sigma -= 0.5
-                self.heading_exploration_rew_coeff += 0.5
+            if self.heading_sigma_coef > 0.05:
+                self.heading_sigma_coef -= self.heading_curriculum
+ 
                 
-        # Slowly introduce the max target penalty. Only once Agents have learned to cover targets effectively.
-        if (self.step_count % (10 * 200) == 0 and self.oneshot_coeff > -20.0):
-            self.oneshot_coeff -= 2.0
-    
+    def process_action(self, agent: Agent):
+        
+        if self.comm_dim > 0:
+            self.coverage_action[agent.name] = agent.action._c.clone()
+            
+        # Clamp square to circle
+        agent.action.u = TorchUtils.clamp_with_norm(agent.action.u, agent.u_range)
+
+        # Zero small input
+        action_norm = torch.linalg.vector_norm(agent.action.u, dim=1)
+        agent.action.u[action_norm < 0.08] = 0
+
+        agent.controller.process_force()
+        
+        
     def extra_render(self, env_index: int = 0) -> "List[Geom]":
         """Render additional visual elements."""
         from vmas.simulator import rendering
@@ -545,10 +578,14 @@ class MyLanguageScenario(MyScenario):
 
                     # Heading
                     head = heading_grid[j, i]
-                    if False and (self.global_heading_objective or self.llm_activate):
+                    if self.global_heading_objective or self.llm_activate:
                         heading_lvl = head.item()
                         if heading_lvl >= 0.:
-                            color = (self.target_colors[self.target_class[env_index]] * 0.8 * heading_lvl)
+                            if self.n_targets > 0:
+                                color = (self.target_colors[self.target_class[env_index]] * 0.8 * heading_lvl * self.num_grid_cells * 0.1)
+                            else:
+                                # redish gradient based on heading
+                                color = (1.0, 1.0 - heading_lvl * self.num_grid_cells * 0.1, 1.0 - heading_lvl * self.num_grid_cells * 0.1)  # Redish gradient based on heading
                             rect = rendering.FilledPolygon([(x, y), (x + grid.cell_size_x, y), 
                                                             (x + grid.cell_size_x, y + grid.cell_size_y), (x, y + grid.cell_size_y)])
                             rect.set_color(*color)
@@ -572,9 +609,9 @@ class MyLanguageScenario(MyScenario):
                         continue
                     if self.world.get_distance(agent1, agent2)[env_index] <= self._comms_range:
                         line = rendering.Line(
-                            agent1.state.pos[env_index], agent2.state.pos[env_index], width=3
+                            agent1.state.pos[env_index], agent2.state.pos[env_index], width=5
                         )
-                        line.set_color(*Color.BLACK.value)
+                        line.set_color(*Color.GREEN.value)
                         geoms.append(line)
         
         # Render Instruction Sentence
@@ -585,7 +622,7 @@ class MyLanguageScenario(MyScenario):
                     text=sentence,
                     font_size=6
                 )
-                #geom.label.color = (255, 255, 255, 255)
+                geom.label.color = (255, 255, 255, 255)
                 xform = rendering.Transform()
                 geom.add_attr(xform)
                 geoms.append(geom)
@@ -597,9 +634,10 @@ class MyLanguageScenario(MyScenario):
     
     def done(self):
         """Check if all targets are covered and simulation should end."""
-        return torch.tensor([False], device=self.world.device).expand(
-            self.world.batch_dim
-        )
+        # return torch.tensor([False], device=self.world.device).expand(
+        #     self.world.batch_dim
+        # )
+        return self.all_time_covered_targets[torch.arange(0,self.world.batch_dim, device = self.device),self.target_class].all(dim=-1)
     
     
 

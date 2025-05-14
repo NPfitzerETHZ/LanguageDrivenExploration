@@ -12,10 +12,10 @@ from vmas.simulator.utils import Color, ScenarioUtils
 if typing.TYPE_CHECKING:
     from vmas.simulator.rendering import Geom
 
-from scenarios.myscenario import MyScenario
+from scenarios.centralized.myscenario import MyScenario
 from scenarios.old.dead_end import DeadEndOccupancyGrid
-from scenarios.scripts.heading import HeadingOccupancyGrid
-from scenarios.scripts.multiple_headings import MultiHeadingOccupancyGrid, load_llm
+from scenarios.grids.heading_grid import HeadingOccupancyGrid
+from scenarios.grids.multiple_headings_grids import MultiHeadingOccupancyGrid, load_llm
 
 class MyLanguageScenario(MyScenario):
 
