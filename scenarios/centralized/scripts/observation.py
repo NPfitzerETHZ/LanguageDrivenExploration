@@ -21,10 +21,10 @@ def observation(agent, env):
             - x_semidim, y_semidim: Map half-dimensions for normalization
             - device: Target device for computation
             - use_lidar, observe_pos_history, observe_vel_history
-            - llm_activate, observe_targets, max_target_objective
-            - use_occupancy_grid_obs, use_expo_search_rew
+            - llm_activate, observe_targets
+            - use_expo_search_rew
             - mini_grid_radius: Radius for grid-based methods
-            - max_target_count, num_covered_targets: Tensors [1]
+            - num_covered_targets: Tensor [1]
             - use_gnn: Boolean
 
     Returns:
@@ -72,16 +72,8 @@ def observation(agent, env):
     if env.observe_targets:
         obs_components.append(env.occupancy_grid.get_grid_target_observation(pos, env.mini_grid_radius))
 
-    # === Max target counts ===
-    if env.max_target_objective:
-        obs_components.extend([
-            env.max_target_count.unsqueeze(1),
-            env.num_covered_targets.unsqueeze(1)
-        ])
-
     # === Occupancy Grid ===
-    if env.use_occupancy_grid_obs:
-        obs_components.append(env.occupancy_grid.get_grid_visits_obstacle_observation(pos, env.mini_grid_radius))
+    obs_components.append(env.occupancy_grid.get_grid_visits_obstacle_observation(pos, env.mini_grid_radius))
 
     # === Exponential Search Reward / Redundant LLM Counter ===
     if env.use_expo_search_rew or env.llm_activate:

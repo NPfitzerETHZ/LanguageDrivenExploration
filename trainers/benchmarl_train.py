@@ -83,6 +83,7 @@ task.config = {
         "use_grid_data": True,
         "use_class_data": False,
         "use_max_targets_data": False,
+        "use_expo_search_rew": True,
         "observe_pos_history": False,
         "observe_targets": False,
         "shared_target_reward": True,

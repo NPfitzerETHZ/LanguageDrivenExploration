@@ -112,7 +112,6 @@ class MyLanguageScenario(BaseScenario):
         self.observe_targets = kwargs.pop("observe_targets", True)
         self.observe_pos_history = kwargs.pop("observe_pos_history", True)
         self.observe_vel_history = kwargs.pop("observe_vel_history", False)
-        self.use_occupancy_grid_obs = kwargs.pop("use_occupency_grid_obs", True)
         self.use_grid_data = kwargs.pop("use_grid_data", True)
         self.use_class_data = kwargs.pop("use_class_data", True)
         self.use_max_targets_data = kwargs.pop("use_max_targets_data", True)

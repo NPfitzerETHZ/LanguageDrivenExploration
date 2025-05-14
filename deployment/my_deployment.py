@@ -33,12 +33,16 @@ sys.path.insert(0, "/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration")
 from scenarios.grids.world_occupancy_grid import WorldOccupancyGrid
 from scenarios.centralized.multi_agent_llm_exploration import MyLanguageScenario
 from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory
+from scenarios.centralized.scripts.observation import observation
 from benchmarl.environments import VmasTask
 from benchmarl.experiment import ExperimentConfig, Experiment
 from benchmarl.algorithms import MappoConfig
 from benchmarl.models import GnnConfig, SequenceModelConfig
 from benchmarl.models.mlp import MlpConfig
 from benchmarl.utils import DEVICE_TYPING
+
+X = 0
+Y = 1
 
 
 def convert_ne_to_xy(north: float, east: float) -> tuple[float, float]:
@@ -139,6 +143,12 @@ def get_experiment(config: DictConfig) -> Experiment:
     
     return experiment
 
+class State:
+    def __init__(self, pos, vel, device):
+        self.device = device
+        self.pos = torch.tensor(pos, dtype=torch.float32, device=self.device)
+        self.vel = torch.tensor(vel, dtype=torch.float32, device=self.device)
+
 class Agent:
     def __init__(
     self,
@@ -169,14 +179,18 @@ class Agent:
         self.device = device
         self.state_received = False
         # State variables updated by current_state_callback
-        self.current_pos_n = 0.0
-        self.current_pos_e = 0.0
-        self.current_vel_n = 0.0
-        self.current_vel_e = 0.0
+        
+        self.state = State(
+            pos=[0.0, 0.0],
+            vel=[0.0, 0.0],
+            device=self.device
+        )
         
         self.pos_history_length = pos_history_length
         self.pos_dim = 2
-        self._create_pos_history()
+        
+        if self.node.observe_pos_history:
+            self._create_pos_history()
         
         self.timer = self.node.create_timer(self.obs_dt, self.collect_observation)
         
@@ -224,73 +238,24 @@ class Agent:
     
     def current_state_callback(self, msg: CurrentState):
         # Extract current state values from the state vector
-        self.current_pos_n = msg.state_vector[0]
-        self.current_pos_e = msg.state_vector[1]
-        self.current_vel_n = msg.state_vector[3]
-        self.current_vel_e = msg.state_vector[4]
+        current_pos_n = msg.state_vector[0]
+        current_pos_e = msg.state_vector[1]
+        current_vel_n = msg.state_vector[3]
+        current_vel_e = msg.state_vector[4]
+        
+        self.state.pos[X], self.state.pos[Y] = convert_ne_to_xy(current_pos_n, current_pos_e)
+        self.state.vel[X], self.state.vel[Y] = convert_ne_to_xy(current_vel_n, current_vel_e)
+        
         self.state_received = True
-    
-    def get_current_state(self):
-        # This function should return the current state of the agent
-        # For now, we will just return a dummy state
-        return {
-            "position_n": self.current_pos_n,
-            "position_e": self.current_pos_e,
-            "velocity_n": self.current_vel_n,
-            "velocity_e": self.current_vel_e
-        }
     
     def collect_observation(self):
         
-        # Get the current state of the agent
-        current_state = self.get_current_state()
-        pos_x, pos_y = convert_ne_to_xy(current_state["position_n"], current_state["position_e"])
-        vel_x, vel_y = convert_ne_to_xy(current_state["velocity_n"], current_state["velocity_e"])
-        pos_x = pos_x / self.node.x_semidim
-        pos_y = pos_y / self.node.y_semidim
-        vel_x = vel_x / (2 * self.node.x_semidim)
-        vel_y = vel_y / (2 * self.node.y_semidim)
-
-        pos = torch.tensor([pos_x, pos_y], device=self.device).unsqueeze(0)
-        vel = torch.tensor([vel_x, vel_y], device=self.device).unsqueeze(0)
-        pos_hist = self.pos_history.get_flattened() if self.observe_pos_history else None
-        
-        obs_components = []
-
-        # Sentence embedding (not logged)
-        if self.llm_activate:
-            obs_components.append(self.grid.observe_embeddings())  # excluded from logging
-
-        # Targets
-        if self.observe_targets:
-            target_obs = self.grid.get_grid_target_observation(pos, self.mini_grid_radius)
-            self.node.get_logger().info(f"Target observation: {target_obs.cpu().numpy()}")
-            obs_components.append(target_obs)
-
-        # Histories
-        if self.observe_pos_history:
-            hist_obs = pos_hist[: pos.shape[0], :]
-            self.node.get_logger().info(f"Position history: {hist_obs.cpu().numpy()}")
-            obs_components.append(hist_obs)
-            self.pos_history.update(pos)
-
-        # Grid Observation
-        grid_obs = self.grid.get_grid_visits_obstacle_observation(pos, self.mini_grid_radius)
-        self.node.get_logger().info(f"Grid visits/obstacles observation: {grid_obs.cpu().numpy()}")
-        obs_components.append(grid_obs)
-
-        # Number of covered targets (if LLM active)
-        if self.llm_activate:
-            obs_components.append(self.num_covered_targets.unsqueeze(1))  # not logged
-
-        # Update State Buffer and Grid
-        obs = torch.cat([comp for comp in obs_components if comp is not None], dim=-1)
-        self.state_buffer.append({"obs": obs, "pos": pos, "vel":vel})
-        # Keep only the most recent `self.state_buffer_length` entries
+        obs = observation(self, self.node)
+        self.state_buffer.append(obs)
         if len(self.state_buffer) > self.state_buffer_length:
             self.state_buffer = self.state_buffer[-self.state_buffer_length:]
-        self.grid.update(pos)
-
+        self.grid.update(self.state.pos)
+        
     def send_zero_velocity(self):
         # Send a zero velocity command
         self.reference_state.vn = 0.0
@@ -315,12 +280,11 @@ class VmasModelsROSInterface(Node):
         grid_config = config["grid_config"]
         self.x_semidim = grid_config.x_semidim
         self.y_semidim = grid_config.y_semidim
-
-        self.task_x_semidim = config["task_config"].value.x_semidim
-        self.task_y_semidim = config["task_config"].value.y_semidim
+        
+        # Task Config
         self.embedding_size = config["task_config"].value.embedding_size
-
         self.use_gnn = config["task_config"].value.use_gnn
+        self.use_lidar = False
         self.num_grid_cells = config["task_config"].value.num_grid_cells
         self.mini_grid_radius = config["task_config"].value.mini_grid_radius
         self.n_target_classes = config["task_config"].value.n_target_classes
@@ -328,7 +292,11 @@ class VmasModelsROSInterface(Node):
         self.observe_targets = config["task_config"].value.observe_targets
         self.agent_weight = config["task_config"].value.agent_weight
         self.grid_visit_threshold = config["task_config"].value.grid_visit_threshold
+        self.use_expo_search_rew = config["task_config"].value.use_expo_search_rew
         self.num_covered_targets = torch.zeros(1, dtype=torch.int, device=self.device)
+        self.n_agents = config["task_config"].value.n_agents
+        self.observe_pos_history = config["task_config"].value.observe_pos_history
+        self.observe_vel_history = False
         self._create_occupancy_grid()
         
         # History Config
@@ -347,8 +315,6 @@ class VmasModelsROSInterface(Node):
                                   "pos_n", "pos_e", "vel_n", "vel_e"])
 
         # Create Agents
-        self.n_agents = config["task_config"].value.n_agents
-        self.observe_pos_history = config["task_config"].value.observe_pos_history
         self.agents: List[Agent] = []
         id_list = [3,4,6,7]
         for i in range(self.n_agents):
@@ -412,18 +378,16 @@ class VmasModelsROSInterface(Node):
                 continue
 
             latest_state = agent.state_buffer.pop()
-            obs = latest_state["obs"].to(torch.float32)
-            pos = latest_state["pos"].to(torch.float32)
-            vel = latest_state["vel"].to(torch.float32)
-
             if self.use_gnn:
+                obs = latest_state["obs"].to(torch.float32)
+                pos = latest_state["pos"].to(torch.float32)
+                vel = latest_state["vel"].to(torch.float32)
+
                 obs_list.append(obs)
                 pos_list.append(pos)
-                vel_list.append(vel)
+                vel_list.append(vel)        
             else:
-                obs_with_pos_vel = torch.cat([obs, pos, vel], dim=-1).to(torch.float32)
-                obs_list.append(obs_with_pos_vel)
-
+                obs_list.append(latest_state.to(torch.float32))
         
         if not obs_list:
             self.get_logger().warn("No valid observations collected. Skipping this timestep.")
@@ -473,12 +437,12 @@ class VmasModelsROSInterface(Node):
             # Log to console
             self.get_logger().info(
                 f"Robot {agent.robot_id} - Commanded velocity ne: {vel_n}, {vel_e} - "
-                f"pos: [{agent.current_pos_n}, {agent.current_pos_e}] - vel: [{agent.current_vel_n}, {agent.current_vel_e}]"
+                f"pos: [{agent.state.pos[X]}, {agent.state.pos[Y]}] - vel: [{agent.state.vel[X]}, {agent.state.vel[Y]}]"
             )
 
             # Log to CSV file including both simulation time and real-world time
             self.csv_writer.writerow([agent.mytime, real_time_str, agent.robot_id, agent.reference_state.vn, agent.reference_state.ve,
-                                    agent.current_pos_n, agent.current_pos_e, agent.current_vel_n, agent.current_vel_e])
+                                    agent.state.pos[X],agent.state.pos[Y], agent.state.vel[X], agent.state.vel[Y]])
             self.log_file.flush()
 
             # Publish the command
