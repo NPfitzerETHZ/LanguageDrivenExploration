@@ -47,7 +47,7 @@ def get_env_fun(
     )
 
 # Comms_radius in normalized Frame
-comms_radius = 0.5
+comms_radius = 1.0
 use_gnn = True
 
 VmasTask.get_env_fun = get_env_fun
@@ -57,66 +57,97 @@ experiment_config = ExperimentConfig.get_from_yaml()
 # Loads from "benchmarl/conf/task/vmas/balance.yaml"
 task = VmasTask.NAVIGATION.get_from_yaml()
 task.config = {
-        "max_steps": 250,
-        "n_agents": 4,
-        "agent_weight": 1.0,
-        "agent_radius": 0.01,
-        "n_targets_per_class": 4,
-        "n_target_classes": 1,
-        "x_semidim": 1.0,
-        "y_semidim": 1.0,
-        "mini_grid_radius": 1,
-        "grid_visit_threshold": 4,
-        "min_collision_distance": 0.30,
-        "comms_radius": comms_radius,
-        "use_gnn": use_gnn,
-        "comm_dim": 0,
-        "n_obstacles": 0,
-        "global_heading_objective": False,
-        "num_grid_cells": 400,
-        "embedding_size": 1024,
-        "data_json_path": 'data/language_data_complete_multi_target_color_scale.json',
-        "decoder_model_path": 'decoders/llm0_decoder_model_grid_single_target_color.pth',
-        "use_veolcity_controler": True,
-        "llm_activate": True,
-        "use_decoder": False,
-        "use_grid_data": True,
-        "use_class_data": False,
-        "use_max_targets_data": False,
-        "use_expo_search_rew": True,
-        "observe_pos_history": False,
-        "observe_targets": False,
-        "shared_target_reward": True,
-        "history_length": 0
+    # === Map & Scenario Layout ===
+    "x_semidim": 3.0,
+    "y_semidim": 3.0,
+    "covering_range": 0.15,
+    "agent_radius": 0.16,
+    "n_obstacles": 0,
+
+    # === Agent/Target Counts & Behavior ===
+    "n_agents": 2,
+    "agents_per_target": 1,
+    "n_targets_per_class": 4,
+    "n_target_classes": 1,
+    "n_targets": 4,  # 4 per class * 1 class
+    "done_at_termination": True,
+
+    # === Rewards ===
+    "shared_target_reward": True,
+    "shared_final_reward": True,
+    "agent_collision_penalty": -1.5,
+    "obstacle_collision_penalty": -0.5,
+    "covering_rew_coeff": 7.0,
+    "false_covering_penalty_coeff": -0.25,
+    "time_penalty": 0.00,
+    "terminal_rew_coeff": 15.0,
+    "exponential_search_rew_coeff": 1.5,
+    "termination_penalty_coeff": -5.0,
+
+    # === Exploration Rewards ===
+    "use_expo_search_rew": True,
+    "grid_visit_threshold": 4,
+    "exploration_rew_coeff": -0.05,
+    "new_cell_rew_coeff": 0.05,
+    "heading_exploration_rew_coeff": 20.0,
+
+    # === Lidar & Sensing ===
+    "use_lidar": False,
+    "n_lidar_rays_entities": 8,
+    "n_lidar_rays_agents": 12,
+    "use_velocity_controller": True,
+
+    # === Agent Communication & GNNs ===
+    "use_gnn": use_gnn,
+    "comm_dim": 0,
+    "comms_radius": comms_radius,
+
+    # === Observation Settings ===
+    "observe_grid": True,
+    "observe_targets": False,
+    "observe_pos_history": False,
+    "observe_vel_history": False,
+    "use_grid_data": True,
+    "use_class_data": False,
+    "use_max_targets_data": False,
+
+    # === Grid Settings ===
+    "num_grid_cells": 400,
+    "mini_grid_radius": 1,
+
+    # === Movement & Dynamics ===
+    "agent_weight": 1.0,
+    "agent_v_range": 1.0,
+    "agent_a_range": 1.0,
+    "min_collision_distance": 0.1,
+    "linear_friction": 0.1,
+
+    # === Histories ===
+    "history_length": 0,
+    
+    # === Language & LLM Goals ===
+    "embedding_size": 1024,
+    "llm_activate": True,
+
+    # === External Inputs ===
+    "data_json_path": "data/language_data_complete_multi_target_color_scale.json",
+    "decoder_model_path": "decoders/llm0_decoder_model_grid_single_target_color.pth",
+    "use_decoder": False,
+
+    # === Visuals ===
+    "viewer_zoom": 1,
+
+    # === Additional Scenario ===
+    "max_steps": 250
 }
 
 # Loads from "benchmarl/conf/algorithm/mappo.yaml"
 algorithm_config = MappoConfig.get_from_yaml()
 algorithm_config.entropy_coef = 0.0000
-# Loads from "benchmarl/conf/model/layers/mlp.yaml"
-model_config = MlpConfig.get_from_yaml()
-# model_config.num_cells = [256, 256, 256]
 model_config = MlpConfig(num_cells=[256,256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
-#model_config.norm_class = nn.LayerNorm(normalized_shape=)
-#model_config.activation_class = nn.LeakyReLU()
-#critic_model_config = MlpConfig.get_from_yaml()
-#critic_model_config.num_cells = [256, 256, 256]
 critic_model_config = MlpConfig(num_cells=[256,256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
 
 if use_gnn:
-    # gnn_config = GnnConfig(
-    #     topology="from_pos", # Tell the GNN to build topology from positions and edge_radius
-    #     edge_radius=comms_radius, # The edge radius for the topology
-    #     self_loops=True,
-    #     gnn_class=torch_geometric.nn.conv.GATv2Conv,
-    #     gnn_kwargs={"add_self_loops": False, "residual": True}, # kwargs of GATv2Conv, residual is helpful in RL
-    #     position_key="pos",
-    #     pos_features=2,
-    #     velocity_key="vel",
-    #     vel_features=2,
-    #     #gnn_class=torch_geometric.nn.conv.GraphConv,
-    #     exclude_pos_from_node_features=False, # Do we want to use pos just to build edge features or also keep it in node features? 
-    # )
     
     gnn_config = GnnConfig(
         topology="from_pos", # Tell the GNN to build topology from positions and edge_radius
@@ -131,13 +162,6 @@ if use_gnn:
         exclude_pos_from_node_features=False, # Do we want to use pos just to build edge features or al>
     )
 
-    critic_gnn_config = GnnConfig(
-        topology="full", 
-        self_loops=True,
-        gnn_class=torch_geometric.nn.conv.GCNConv,
-        #gnn_class=torch_geometric.nn.conv.GraphConv,
-        exclude_pos_from_node_features=False, # Do we want to use pos just to build edge features or al>
-    )
     # We add an MLP layer to process GNN output node embeddings into actions
     mlp_config = MlpConfig(num_cells=[256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
     model_config = SequenceModelConfig(model_configs=[gnn_config, mlp_config], intermediate_sizes=[256])

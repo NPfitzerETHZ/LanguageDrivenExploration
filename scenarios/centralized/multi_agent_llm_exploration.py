@@ -7,6 +7,8 @@ from vmas.simulator.core import Agent,Landmark, Sphere, Box, World, Line
 from vmas.simulator.utils import Color, ScenarioUtils, TorchUtils
 from vmas.simulator.controllers.velocity_controller import VelocityController
 from vmas.simulator.scenario import BaseScenario
+from vmas.simulator.dynamics.holonomic import Holonomic
+from vmas.simulator.sensors import Lidar
 
 if typing.TYPE_CHECKING:
     from vmas.simulator.rendering import Geom
@@ -15,6 +17,7 @@ from scenarios.grids.world_occupancy_grid import WorldOccupancyGrid, load_task_d
 from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory
 from scenarios.centralized.scripts.observation import observation
 from scenarios.centralized.scripts.rewards import compute_reward
+from scenarios.centralized.scripts.load_config import load_scenario_config
 
 color_dict = {
     "red":      {"rgb": [1.0, 0.0, 0.0], "index": 0},
@@ -35,7 +38,7 @@ class MyLanguageScenario(BaseScenario):
     def make_world(self, batch_dim: int, device: torch.device, **kwargs):
         """Initialize the world and entities."""
         self.device = device
-        self._load_scenario_config(kwargs)
+        load_scenario_config(kwargs,self)
         self._initialize_scenario_vars(batch_dim)
         world = self._create_world(batch_dim)
         self._create_occupancy_grid(batch_dim)
@@ -45,132 +48,19 @@ class MyLanguageScenario(BaseScenario):
         self._initialize_rewards(batch_dim)
         return world
     
-    def _load_scenario_config(self, kwargs):
-        
-        # === Map & Scenario Layout ===
-        self.x_semidim = kwargs.pop("x_semidim", 1.0)
-        self.y_semidim = kwargs.pop("y_semidim", 1.0)
-        self._min_dist_between_entities = kwargs.pop("min_dist_between_entities", 0.2)
-        self._covering_range = kwargs.pop("covering_range", 0.15)
-        self._lidar_range = kwargs.pop("lidar_range", 0.15)
-        self.agent_radius = kwargs.pop("agent_radius", 0.01)
-        self.n_obstacles = kwargs.pop("n_obstacles", 10)
-
-        # === Agent/Target Counts & Behavior ===
-        self.n_agents = kwargs.pop("n_agents", 6)
-        self._agents_per_target = kwargs.pop("agents_per_target", 1)
-        self.agents_stay_at_target = kwargs.pop("agents_stay_at_target", False)
-        self.targets_respawn = kwargs.pop("targets_respawn", False)
-        self.n_targets_per_class = kwargs.pop("n_targets_per_class", 1)
-        self.n_target_classes = kwargs.pop("n_target_classes", 2)
-        self.n_targets = self.n_target_classes * self.n_targets_per_class
-        self.done_at_termination = kwargs.pop("done_at_termination", True)
-
-        # === Rewards ===
-        self.shared_target_reward = kwargs.pop("shared_target_reward", True)
-        self.shared_final_reward = kwargs.pop("shared_final_reward", True)
-        self.agent_collision_penalty = kwargs.pop("agent_collision_penalty", -0.5)
-        self.obstacle_collision_penalty = kwargs.pop("obstacle_collision_penalty", -0.5)
-        self.covering_rew_coeff = kwargs.pop("covering_rew_coeff", 5.0)
-        self.false_covering_penalty_coeff = kwargs.pop("false_covering_penalty_coeff", -0.25)
-        self.time_penalty = kwargs.pop("time_penalty", -0.05)
-        self.terminal_rew_coeff = kwargs.pop("terminal_rew_coeff", 15.0)
-        self.exponential_search_rew = kwargs.pop("exponential_search_rew_coeff", 1.5)
-        self.termination_penalty_coeff = kwargs.pop("termination_penalty_coeff", -5.0)
-
-        # === Exploration Rewards ===
-        self.use_count_rew = kwargs.pop("use_count_rew", False)
-        self.use_entropy_rew = kwargs.pop("use_entropy_rew", False)
-        self.use_jointentropy_rew = kwargs.pop("use_jointentropy_rew", False)
-        self.use_occupancy_grid_rew = kwargs.pop("use_occupency_grid_rew", True)
-        self.use_expo_search_rew = kwargs.pop("use_expo_search_rew", True)
-        self.grid_visit_threshold = kwargs.pop("grid_visit_threshold", 3)
-        self.exploration_rew_coeff = kwargs.pop("exploration_rew_coeff", -0.05)
-        self.new_cell_rew_coeff = kwargs.pop("new_cell_rew_coeff", 0.0)
-        self.heading_exploration_rew_coeff = kwargs.pop("heading_exploration_rew_coeff", 20.0)
-        self.heading_sigma_coef = kwargs.pop("heading_sigma_coef", 0.15)
-        self.heading_curriculum = kwargs.pop("heading_curriculum", 0.00)
-
-        # === Lidar & Sensing ===
-        self.use_lidar = kwargs.pop("use_lidar", False)
-        self.use_target_lidar = kwargs.pop("use_target_lidar", False)
-        self.use_agent_lidar = kwargs.pop("use_agent_lidar", False)
-        self.use_obstacle_lidar = kwargs.pop("use_obstacle_lidar", False)
-        self.n_lidar_rays_entities = kwargs.pop("n_lidar_rays_entities", 8)
-        self.n_lidar_rays_agents = kwargs.pop("n_lidar_rays_agents", 12)
-        self.use_velocity_controller = kwargs.pop("use_velocity_controller", True)
-
-        # === Agent Communication & GNNs ===
-        self.use_gnn = kwargs.pop("use_gnn", False)
-        self.comm_dim = kwargs.pop("comm_dim", 1)
-        self._comms_range = kwargs.pop("comms_radius", 0.35)
-
-        # === Observation Settings ===
-        self.known_map = kwargs.pop("known_map", False)
-        self.known_agent_pos = kwargs.pop("known_agents", False)
-        self.observe_grid = kwargs.pop("observe_grid", True)
-        self.observe_targets = kwargs.pop("observe_targets", True)
-        self.observe_pos_history = kwargs.pop("observe_pos_history", True)
-        self.observe_vel_history = kwargs.pop("observe_vel_history", False)
-        self.use_grid_data = kwargs.pop("use_grid_data", True)
-        self.use_class_data = kwargs.pop("use_class_data", True)
-        self.use_max_targets_data = kwargs.pop("use_max_targets_data", True)
-
-        # === Grid Settings ===
-        self.num_corridors = 2
-        self.num_grid_cells = kwargs.pop("num_grid_cells", 400)
-        self.mini_grid_dim = 3
-        self.mini_grid_radius = kwargs.pop("mini_grid_radius", 1)
-        self.plot_grid = True
-        self.visualize_semidims = False
-
-        # === Movement & Dynamics ===
-        self.agent_weight = kwargs.pop("agent_weight", 1.0)
-        self.agent_max_speed = kwargs.pop("agent_max_speed", 4.5)
-        self.min_collision_distance = kwargs.pop("min_collision_distance", 0.1)
-
-        # === Histories ===
-        self.history_length = kwargs.pop("history_length", 2)
-        self.pos_history_length = self.history_length
-        self.pos_dim = 2
-        self.vel_history_length = 30
-        self.vel_dim = 2
-
-        # === Language & LLM Goals ===
-        self.max_target_objective = kwargs.pop("max_target_objective", False)
-        self.global_heading_objective = kwargs.pop("global_heading_objective", False)
-        self.target_attribute_objective = kwargs.pop("target_attribute_objective", False)
-        self.embedding_size = kwargs.pop("embedding_size", 1024)
-        self.llm_activate = kwargs.pop("llm_activate", True)
-
-        if self.max_target_objective or self.global_heading_objective or self.target_attribute_objective:
-            print("Make sure to deactivate all Language Driven Goal Simulators")
-            self.llm_activate = False
-
-        # === External Inputs ===
-        self.data_json_path = kwargs.pop("data_json_path", "")
-        self.decoder_model_path = kwargs.pop("decoder_model_path", "")
-        self.use_decoder = kwargs.pop("use_decoder", False)
-
-        # === Visuals ===
-        self.viewer_zoom = 1
-        self.target_color = Color.GREEN
-        self.obstacle_color = Color.BLUE
-
-        # Final check
-        ScenarioUtils.check_kwargs_consumed(kwargs)
-    
     def _create_world(self, batch_dim: int):
         """Create and return the simulation world."""
         return World(
             batch_dim,
             self.device,
+            dt=0.1,
             x_semidim=self.x_semidim,
             y_semidim=self.y_semidim,
             dim_c=self.comm_dim,
             collision_force=500,
-            substeps=2,
-            drag=0.25,
+            substeps=5,
+            linear_friction=self.linear_friction,
+            drag=0
         )
 
     
@@ -184,9 +74,11 @@ class MyLanguageScenario(BaseScenario):
                 silent=silent,
                 shape=Sphere(radius=self.agent_radius),
                 mass=self.agent_weight,
-                max_speed=self.agent_max_speed,
-                u_multiplier=1,
+                u_range=self.agent_u_range,
+                f_range=self.agent_f_range,
+                v_range=self.agent_v_range,
                 sensors=(self._create_agent_sensors(world) if self.use_lidar else []),
+                dynamics=Holonomic(),
                 color=Color.GREEN
             )
             
@@ -206,6 +98,18 @@ class MyLanguageScenario(BaseScenario):
             agent.termination_rew = torch.zeros(batch_dim, device=self.device)
             agent.termination_signal = torch.zeros(batch_dim, device=self.device)
             world.add_agent(agent)
+    
+    def _create_agent_sensors(self, world):
+        """Create and return sensors for agents."""
+        sensors = []
+        
+        if self.use_target_lidar:
+            sensors.append(Lidar(world, n_rays=self.n_lidar_rays_entities, max_range=self._lidar_range, entity_filter=lambda e: e.name.startswith("target"), render_color=Color.GREEN))
+        if self.use_obstacle_lidar:
+            sensors.append(Lidar(world, n_rays=self.n_lidar_rays_entities, max_range=self._lidar_range, entity_filter=lambda e: e.name.startswith("obstacle"), render_color=Color.BLUE))
+        if self.use_agent_lidar:
+            sensors.append(Lidar(world, n_rays=self.n_lidar_rays_agents, max_range=self._lidar_range, entity_filter=lambda e: e.name.startswith("agent"), render_color=Color.RED))
+        return sensors
     
     def _create_agent_state_histories(self, agent, batch_dim):
         if self.observe_pos_history:
@@ -236,7 +140,7 @@ class MyLanguageScenario(BaseScenario):
             visit_threshold=self.grid_visit_threshold,
             embedding_size=self.embedding_size,
             device=self.device)
-        self._covering_range = self.occupancy_grid.cell_radius
+        self._covering_range = self.occupancy_grid.cell_radius + self.agent_radius
 
     
     def _create_obstacles(self, world):
@@ -346,7 +250,7 @@ class MyLanguageScenario(BaseScenario):
             env_index = torch.atleast_1d(env_index)
             
         obs_poses, agent_poses, target_poses = self.occupancy_grid.spawn_llm_map(
-            env_index, self.n_obstacles, self.n_agents, self.target_groups, self.target_class, self.max_target_count,heading_sigma_coef=self.heading_sigma_coef
+            env_index, self.n_obstacles, self.n_agents, self.target_groups, self.target_class, self.max_target_count
         )
 
         for i, idx in enumerate(env_index):
@@ -407,8 +311,6 @@ class MyLanguageScenario(BaseScenario):
             self.false_covering_penalty_coeff -= 0.25
             # Progressively decrease the size of the heading region
             # This is to promote faster convergence to the target.
-            if self.heading_sigma_coef > 0.05:
-                self.heading_sigma_coef -= self.heading_curriculum
  
                 
     def process_action(self, agent: Agent):
@@ -467,7 +369,7 @@ class MyLanguageScenario(BaseScenario):
 
                     # Heading
                     head = heading_grid[j, i]
-                    if self.global_heading_objective or self.llm_activate:
+                    if self.llm_activate:
                         heading_lvl = head.item()
                         if heading_lvl >= 0.:
                             if self.n_targets > 0:

@@ -80,7 +80,7 @@ def compute_agent_reward(agent, env):
 
     group_rewards = num_covered * env.covering_rew_val.unsqueeze(1) * reward_mask  # [B, G]
 
-    if env.target_attribute_objective or env.llm_activate:
+    if env.llm_activate:
         hinted_mask = env.occupancy_grid.searching_hinted_target.unsqueeze(1)  # [B, 1]
         group_rewards += (
             num_covered * env.false_covering_penalty_coeff * (~reward_mask) * hinted_mask
@@ -152,7 +152,7 @@ def compute_exploration_rewards(agent, pos, env):
         new_cell_rew_coeff=env.new_cell_rew_coeff
     )
 
-    if env.global_heading_objective or env.llm_activate:
+    if env.llm_activate:
         agent.exploration_rew += env.occupancy_grid.compute_region_heading_bonus_normalized(
             pos, heading_exploration_rew_coeff=env.heading_exploration_rew_coeff
         )

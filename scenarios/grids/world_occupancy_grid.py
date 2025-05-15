@@ -311,7 +311,6 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
         target_groups: List[List[Landmark]],
         target_class: torch.Tensor,
         max_target_count: torch.Tensor,
-        heading_sigma_coef: float,
         padding = True):
         
         """ This function handles the scenario reset. It is unbelievably complicated."""
@@ -369,9 +368,6 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
                         vec = self.get_target_pose_in_heading(envs,envs.numel())
                         # Place the target in the grid (and mark as visited, this a test)
                         self.grid_targets[envs, vec[:,1].unsqueeze(1).int(), vec[:,0].unsqueeze(1).int()] = (TARGET + j)
-                        #self.grid_visits_sigmoid[envs, vec[:,1].unsqueeze(1).int(), vec[:,0].unsqueeze(1).int()] = 1.0
-                        # Compute Gaussian Heading
-                        self.gaussian_heading(envs,t,vec,heading_sigma_coef)
                         # Store world position
                         target_poses[mask,j,t] = self.grid_to_world(vec[:,0]-pad, vec[:,1]-pad)
             else:
