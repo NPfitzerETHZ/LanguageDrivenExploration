@@ -10,7 +10,7 @@ from typing import List
 import torch
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 from sentence_transformers import SentenceTransformer
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 import hydra
 
 from tensordict import TensorDict
@@ -168,7 +168,7 @@ class Agent:
 
 class VmasModelsROSInterface(Node):
 
-    def __init__(self, config: DictConfig, log_dir: Path):
+    def __init__(self, config: DictConfig, log_dir: Path, restore_path: str):
         super().__init__("vmas_ros_interface")
         self.device = config.device 
         deployment_config = config["deployment"]
@@ -189,7 +189,7 @@ class VmasModelsROSInterface(Node):
         self.pos_history_length = config["task_config"].value.history_length
 
         # Load experiment and get policy
-        experiment = get_experiment(config)
+        experiment = get_experiment(config, restore_path)
         self.policy = experiment.policy
 
         # Setup CSV logging
@@ -316,7 +316,11 @@ class VmasModelsROSInterface(Node):
         accounting for the agent's radius and timestep.
         """
         pos = agent.state.pos[0]  # shape: (2,)
-        vel = cmd_vel.clone()
+        vel = cmd_vel
+        
+        # Scale Action to deplyoment environment
+        vel[X] = vel[X] * self.x_semidim / self.task_x_semidim
+        vel[Y] = vel[Y] * self.y_semidim / self.task_y_semidim
 
         bounds_min = torch.tensor([-self.x_semidim, -self.y_semidim], device=cmd_vel.device) + self.agent_radius
         bounds_max = torch.tensor([ self.x_semidim,  self.y_semidim], device=cmd_vel.device) - self.agent_radius
@@ -334,8 +338,6 @@ class VmasModelsROSInterface(Node):
         # Clamp to the agent's max velocity norm
         clamped_vel = TorchUtils.clamp_with_norm(vel, agent.v_range)
         return clamped_vel.tolist()
-
-
 
     def _issue_commands_to_agents(self, action_tensor):
         real_time_str = datetime.now().isoformat()
@@ -392,48 +394,53 @@ class VmasModelsROSInterface(Node):
             agent.timer = self.create_timer(agent.obs_dt, agent.collect_observation)
         self.get_logger().info("Starting agents with new instruction.")
 
-@hydra.main(config_path="/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration/checkpoints/benchmarl/gnn_two_agent/", 
-            config_name="benchmarl_mappo", version_base="1.1")
-def main(config: DictConfig):
-    rclpy.init()
-
-    # Create runtime log dir
+def get_runtime_log_dir():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     runtime_dir = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
     log_dir = runtime_dir / f"run_{timestamp}"
     log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir
 
-    # Copy all .py files and config to runtime dir
+
+@hydra.main(config_path=None, config_name=None, version_base="1.1")
+def main(cfg: DictConfig) -> None:
+    rclpy.init()
+
+    # Parse config and restore_path from command-line overrides
+    config_path = cfg.config_path
+    restore_path = cfg.restore_path
+
+    # Load actual config using OmegaConf if necessary
+    full_config_path = Path(config_path) / cfg.config_name
+    user_cfg = OmegaConf.load(full_config_path)
+    cfg = OmegaConf.merge(user_cfg, cfg)
+
+    log_dir = get_runtime_log_dir()
+
+    # Copy files for reproducibility
     for src in Path('./src/LanguageDrivenExploration/deployment').rglob("*.py"):
-        dst = log_dir / src.name
-        shutil.copy2(src, dst)
-    for src in Path("./src/LanguageDrivenExploration/checkpoints/benchmarl/gnn_multi_agent/first").rglob("*.yaml"):
-        dst = log_dir / src.name
-        shutil.copy2(src, dst)
+        shutil.copy2(src, log_dir / src.name)
+    for src in Path(config_path).rglob("*.yaml"):
+        shutil.copy2(src, log_dir / src.name)
 
+    # Instantiate interface
     ros_interface_node = VmasModelsROSInterface(
-        config=config,
-        log_dir=log_dir
+        config=cfg,
+        log_dir=log_dir,
+        restore_path=str(restore_path)
     )
     ros_interface_node.prompt_for_new_instruction()
 
     def sigint_handler(sig, frame):
         ros_interface_node.get_logger().info('SIGINT received. Stopping timer and sending zero velocity...')
-        
         ros_interface_node.stop_all_agents()
-        
-        # Spin once to publish the final message
         rclpy.spin_once(ros_interface_node, timeout_sec=0.5)
-
-        # Clean up
         ros_interface_node.destroy_node()
         ros_interface_node.log_file.close()
         rclpy.shutdown()
         sys.exit(0)
 
-
     signal.signal(signal.SIGINT, sigint_handler)
-
     rclpy.spin(ros_interface_node)
 
 

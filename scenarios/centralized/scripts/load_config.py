@@ -101,8 +101,8 @@ def load_scenario_config_yaml(config, env):
     cfg = config["task_config"].value
 
     # === Map & Scenario Layout ===
-    env.x_semidim = cfg.x_semidim
-    env.y_semidim = cfg.y_semidim
+    env.task_x_semidim = cfg.x_semidim
+    env.task_y_semidim = cfg.y_semidim
     env._covering_range = cfg.covering_range
     env._lidar_range = cfg.lidar_range
     env.agent_radius = cfg.agent_radius

@@ -77,7 +77,7 @@ def _load_class(class_path: str):
     except (ImportError, AttributeError) as e:
         raise ImportError(f"Cannot load class '{class_path}': {e}")
 
-def get_experiment(config: DictConfig) -> Experiment:
+def get_experiment(config: DictConfig, restore_path: str) -> Experiment:
     
     VmasTask.get_env_fun = get_env_fun
     Experiment._load_experiment = _load_experiment_cpu
@@ -86,7 +86,7 @@ def get_experiment(config: DictConfig) -> Experiment:
     print(config["experiment_config"].value)
     
     experiment_config = ExperimentConfig(**config["experiment_config"].value)
-    experiment_config.restore_file = str("/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration/checkpoints/benchmarl/gnn_multi_agent_first/gnn_multi_agent_llm_deployment.pt")
+    experiment_config.restore_file = restore_path
     task = VmasTask.NAVIGATION.get_from_yaml()
     task.config = config["task_config"].value
     algorithm_config = MappoConfig(**config["algorithm_config"].value)
