@@ -15,6 +15,7 @@ import hydra
 
 from tensordict import TensorDict
 from benchmarl.utils import DEVICE_TYPING
+from vmas.simulator.utils import TorchUtils
 
 # ROS2
 import rclpy
@@ -54,7 +55,7 @@ class Agent:
     grid: WorldOccupancyGrid,
     num_covered_targets: torch.Tensor,
     task_config,
-    deployement_config,
+    deployment_config,
     device: DEVICE_TYPING):
         
         self.node = node
@@ -62,15 +63,15 @@ class Agent:
         self.weight = weight
         
         # Timer to update state
-        self.obs_dt = deployement_config.obs_dt
+        self.obs_dt = deployment_config.obs_dt
         self.mytime = 0.0
         
         # State buffer
         self.state_buffer = []
         self.state_buffer_length = 5
         
-        self.a_range = deployement_config.a_range
-        self.v_range = deployement_config.v_range
+        self.a_range = deployment_config.a_range
+        self.v_range = deployment_config.v_range
         self.device = device
         self.state_received = False
         # State variables updated by current_state_callback
@@ -97,7 +98,7 @@ class Agent:
         self.observe_targets = task_config.observe_targets
         
         # Get topic prefix from config or use default
-        topic_prefix = getattr(deployement_config, "topic_prefix", "/robomaster_")
+        topic_prefix = getattr(deployment_config, "topic_prefix", "/robomaster_")
         
         # Create publisher for the robot
         self.pub = self.node.create_publisher(
@@ -173,15 +174,16 @@ class VmasModelsROSInterface(Node):
         deployment_config = config["deployment"]
         self.llm = SentenceTransformer(deployment_config.llm_model, device="cpu")
         
+        # Task Config
+        load_scenario_config_yaml(config,self)
+        self._create_occupancy_grid()
+        self.num_covered_targets = torch.zeros(1, dtype=torch.int, device=self.device)
+        
         # Grid Config
         grid_config = config["grid_config"]
         self.x_semidim = grid_config.x_semidim
         self.y_semidim = grid_config.y_semidim
-        
-        # Task Config
-        load_scenario_config_yaml(config,self)
-        self._create_occupancy_grid()
-        
+
         # History Config
         self.pos_dim = 2
         self.pos_history_length = config["task_config"].value.history_length
@@ -211,7 +213,7 @@ class VmasModelsROSInterface(Node):
                 num_covered_targets=self.num_covered_targets,
                 task_config = config["task_config"].value,
                 deployment_config = deployment_config,
-                device=config.device
+                device=self.device
             )
             self.agents.append(agent)
         
@@ -258,6 +260,7 @@ class VmasModelsROSInterface(Node):
             output_td = self.policy(input_td)
 
         action = output_td[("agents", "action")]
+
 
         self._issue_commands_to_agents(action)
         self.step_count += 1
@@ -306,12 +309,40 @@ class VmasModelsROSInterface(Node):
             return TensorDict({
                 ("agents", "observation"): obs_tensor,
             }, batch_size=[len(obs_list)])
+    
+    def clamp_velocity_to_bounds(self, cmd_vel: torch.Tensor, agent) -> List[float]:
+        """
+        Clamp the velocity so the agent remains within the environment bounds,
+        accounting for the agent's radius and timestep.
+        """
+        pos = agent.state.pos[0]  # shape: (2,)
+        vel = cmd_vel.clone()
+
+        bounds_min = torch.tensor([-self.x_semidim, -self.y_semidim], device=cmd_vel.device) + self.agent_radius
+        bounds_max = torch.tensor([ self.x_semidim,  self.y_semidim], device=cmd_vel.device) - self.agent_radius
+
+        next_pos = pos + vel * self.action_dt
+
+        # Compute clamped velocity based on how far the agent can move without crossing bounds
+        below_min = next_pos < bounds_min
+        above_max = next_pos > bounds_max
+
+        # Adjust velocity where next position would violate bounds
+        vel[below_min] = (bounds_min[below_min] - pos[below_min]) / self.action_dt
+        vel[above_max] = (bounds_max[above_max] - pos[above_max]) / self.action_dt
+
+        # Clamp to the agent's max velocity norm
+        clamped_vel = TorchUtils.clamp_with_norm(vel, agent.v_range)
+        return clamped_vel.tolist()
+
+
 
     def _issue_commands_to_agents(self, action_tensor):
         real_time_str = datetime.now().isoformat()
 
         for i, agent in enumerate(self.agents):
-            cmd_vel = action_tensor[i].tolist()
+
+            cmd_vel = self.clamp_velocity_to_bounds(action_tensor[i], agent)
             vel_n, vel_e = convert_xy_to_ne(*cmd_vel)
 
             agent.reference_state.vn = vel_n
@@ -323,15 +354,15 @@ class VmasModelsROSInterface(Node):
 
             self.get_logger().info(
                 f"Robot {agent.robot_id} - Commanded velocity ne: {vel_n}, {vel_e} - "
-                f"pos: [{agent.state.pos[X]}, {agent.state.pos[Y]}] - "
-                f"vel: [{agent.state.vel[X]}, {agent.state.vel[Y]}]"
+                f"pos: [{agent.state.pos[0,X]}, {agent.state.pos[0,Y]}] - "
+                f"vel: [{agent.state.vel[0,X]}, {agent.state.vel[0,Y]}]"
             )
 
             self.csv_writer.writerow([
                 agent.mytime, real_time_str, agent.robot_id,
                 agent.reference_state.vn, agent.reference_state.ve,
-                agent.state.pos[X], agent.state.pos[Y],
-                agent.state.vel[X], agent.state.vel[Y]
+                agent.state.pos[0,X], agent.state.pos[0,Y],
+                agent.state.vel[0,X], agent.state.vel[0,Y]
             ])
             self.log_file.flush()
 
@@ -361,7 +392,7 @@ class VmasModelsROSInterface(Node):
             agent.timer = self.create_timer(agent.obs_dt, agent.collect_observation)
         self.get_logger().info("Starting agents with new instruction.")
 
-@hydra.main(config_path="/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration/checkpoints/benchmarl/gnn_multi_agent_first/", 
+@hydra.main(config_path="/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration/checkpoints/benchmarl/gnn_two_agent/", 
             config_name="benchmarl_mappo", version_base="1.1")
 def main(config: DictConfig):
     rclpy.init()

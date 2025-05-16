@@ -82,21 +82,26 @@ def observation(agent, env):
     # === Pose ===
     if not env.use_gnn:
         
-        # Collect Neighbour positions: 
-        neighbor_pos = []
-        for other_agent in env.world.agents:
+        # Collect neighbor distances and angles
+        neighbor_polar = []
+        max_radius = 0.3
+        for idx, other_agent in enumerate(env.world.agents):
             if other_agent is agent:
                 continue
             rel_pos = other_agent.state.pos - agent.state.pos
             rel_pos_norm = rel_pos / torch.tensor([env.x_semidim, env.y_semidim], device=env.device)
-            neighbor_pos.append(rel_pos_norm)
+            distance = torch.norm(rel_pos_norm,dim=-1)
+            distance = torch.clamp(distance, max=max_radius)
+            angle = torch.atan2(rel_pos_norm[:,1], rel_pos_norm[:,0])
+            angle = torch.where(distance >= max_radius - 1e-6, torch.tensor(0.0, device=env.device), angle)
+            neighbor_polar.append(torch.stack([distance, angle],dim=-1))
 
-        if neighbor_pos:
-            neighbor_pos_tensor = torch.cat(neighbor_pos, dim=-1)
+        if neighbor_polar:
+            neighbor_polar_tensor = torch.cat(neighbor_polar, dim=-1)
         else:
-            neighbor_pos_tensor = torch.zeros(0, device=env.device)
+            neighbor_polar_tensor = torch.zeros(0, device=env.device)
 
-        obs_components.append(neighbor_pos_tensor)
+        obs_components.append(neighbor_polar_tensor)
         obs_components.extend([pos_norm, vel_norm])
 
     # === Final Output ===

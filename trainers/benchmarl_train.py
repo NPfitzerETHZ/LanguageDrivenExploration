@@ -75,7 +75,7 @@ task.config = {
     # === Rewards ===
     "shared_target_reward": True,
     "shared_final_reward": True,
-    "agent_collision_penalty": -1.5,
+    "agent_collision_penalty": -0.25,
     "obstacle_collision_penalty": -0.5,
     "covering_rew_coeff": 7.0,
     "false_covering_penalty_coeff": -0.25,
@@ -159,7 +159,7 @@ if use_gnn:
         pos_features=2,
         velocity_key="vel",
         vel_features=2,
-        exclude_pos_from_node_features=False, # Do we want to use pos just to build edge features or al>
+        exclude_pos_from_node_features=True, # Do we want to use pos just to build edge features or al>
     )
 
     # We add an MLP layer to process GNN output node embeddings into actions
@@ -167,8 +167,8 @@ if use_gnn:
     model_config = SequenceModelConfig(model_configs=[gnn_config, mlp_config], intermediate_sizes=[256])
     critic_model_config = MlpConfig(num_cells=[512,256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
 
-train_device = "cuda" # @param {"type":"string"}
-vmas_device = "cuda" # @param {"type":"string"}
+train_device = "cpu" # @param {"type":"string"}
+vmas_device = "cpu" # @param {"type":"string"}
 experiment_config.sampling_device = vmas_device
 experiment_config.train_device = train_device
 

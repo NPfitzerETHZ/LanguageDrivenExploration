@@ -307,10 +307,13 @@ class MyLanguageScenario(BaseScenario):
         self.step_count += 1
         # Curriculum
         # 1) Once agents have learned that reaching a target can lead to reward, increase penalty for hitting wrong target.
-        if (self.step_count % (25 * 200) == 0 and self.false_covering_penalty_coeff > -0.5): # Check this
+        if (self.step_count % (20 * 250) == 0 and self.false_covering_penalty_coeff > -0.5): # Check this
             self.false_covering_penalty_coeff -= 0.25
             # Progressively decrease the size of the heading region
             # This is to promote faster convergence to the target.
+        
+        if (self.step_count % (20 * 250) == 0 and self.agent_collision_penalty > -1.5): # Check this
+            self.agent_collision_penalty -= 0.25
  
                 
     def process_action(self, agent: Agent):
