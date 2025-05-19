@@ -81,10 +81,7 @@ def get_experiment(config: DictConfig, restore_path: str) -> Experiment:
     
     VmasTask.get_env_fun = get_env_fun
     Experiment._load_experiment = _load_experiment_cpu
-    OmegaConf.set_struct(config["model_config"].value.model_configs[0].gnn_kwargs, False)
-    
-    print(config["experiment_config"].value)
-    
+
     experiment_config = ExperimentConfig(**config["experiment_config"].value)
     experiment_config.restore_file = restore_path
     task = VmasTask.NAVIGATION.get_from_yaml()
@@ -98,6 +95,7 @@ def get_experiment(config: DictConfig, restore_path: str) -> Experiment:
         model_config.activation_class = _load_class(config["model_config"].value.activation_class)
         model_config.layer_class = _load_class(config["model_config"].value.layer_class)
     else:
+        OmegaConf.set_struct(config["model_config"].value.model_configs[0].gnn_kwargs, False)
         gnn_cfg = config["model_config"].value.model_configs[0]
         mlp_cfg = config["model_config"].value.model_configs[1]
         gnn_config = GnnConfig(**gnn_cfg)

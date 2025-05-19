@@ -104,7 +104,6 @@ def load_scenario_config_yaml(config, env):
     env.task_x_semidim = cfg.x_semidim
     env.task_y_semidim = cfg.y_semidim
     env._covering_range = cfg.covering_range
-    env._lidar_range = cfg.lidar_range
     env.agent_radius = cfg.agent_radius
     env.n_obstacles = cfg.n_obstacles
 
@@ -137,9 +136,6 @@ def load_scenario_config_yaml(config, env):
 
     # === Lidar & Sensing ===
     env.use_lidar = cfg.use_lidar
-    env.use_target_lidar = cfg.use_target_lidar
-    env.use_agent_lidar = cfg.use_agent_lidar
-    env.use_obstacle_lidar = cfg.use_obstacle_lidar
     env.n_lidar_rays_entities = cfg.n_lidar_rays_entities
     env.n_lidar_rays_agents = cfg.n_lidar_rays_agents
     env.use_velocity_controller = cfg.use_velocity_controller

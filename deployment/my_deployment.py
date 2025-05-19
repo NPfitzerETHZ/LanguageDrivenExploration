@@ -165,6 +165,9 @@ class Agent:
         self.pub.publish(self.reference_state)
         self.node.log_file.flush()
     
+class World:
+    def __init__(self, agents: List[Agent]):
+        self.agents = agents
 
 class VmasModelsROSInterface(Node):
 
@@ -173,16 +176,16 @@ class VmasModelsROSInterface(Node):
         self.device = config.device 
         deployment_config = config["deployment"]
         self.llm = SentenceTransformer(deployment_config.llm_model, device="cpu")
+
+        # Grid Config
+        grid_config = config["grid_config"]
+        self.x_semidim = grid_config.x_semidim
+        self.y_semidim = grid_config.y_semidim
         
         # Task Config
         load_scenario_config_yaml(config,self)
         self._create_occupancy_grid()
         self.num_covered_targets = torch.zeros(1, dtype=torch.int, device=self.device)
-        
-        # Grid Config
-        grid_config = config["grid_config"]
-        self.x_semidim = grid_config.x_semidim
-        self.y_semidim = grid_config.y_semidim
 
         # History Config
         self.pos_dim = 2
@@ -200,7 +203,7 @@ class VmasModelsROSInterface(Node):
                                   "pos_n", "pos_e", "vel_n", "vel_e"])
 
         # Create Agents
-        self.agents: List[Agent] = []
+        agents: List[Agent] = []
         id_list = deployment_config.id_list
         assert len(id_list) == self.n_agents
         for i in range(self.n_agents):
@@ -215,7 +218,9 @@ class VmasModelsROSInterface(Node):
                 deployment_config = deployment_config,
                 device=self.device
             )
-            self.agents.append(agent)
+            agents.append(agent)
+        
+        self.world = World(agents)
         
         # Create action loop
         self.action_dt = deployment_config.action_dt
@@ -266,7 +271,7 @@ class VmasModelsROSInterface(Node):
         self.step_count += 1
 
     def _all_states_received(self):
-        return all(agent.state_received for agent in self.agents)
+        return all(agent.state_received for agent in self.world.agents)
 
     def _reached_max_steps(self):
         return self.step_count >= self.max_steps
@@ -281,7 +286,7 @@ class VmasModelsROSInterface(Node):
     def _collect_observations(self):
         obs_list, pos_list, vel_list = [], [], []
 
-        for agent in self.agents:
+        for agent in self.world.agents:
             if not agent.state_buffer:
                 self.get_logger().warn(f"No state in buffer for agent {agent.robot_id}")
                 continue
@@ -342,7 +347,7 @@ class VmasModelsROSInterface(Node):
     def _issue_commands_to_agents(self, action_tensor):
         real_time_str = datetime.now().isoformat()
 
-        for i, agent in enumerate(self.agents):
+        for i, agent in enumerate(self.world.agents):
 
             cmd_vel = self.clamp_velocity_to_bounds(action_tensor[i], agent)
             vel_n, vel_e = convert_xy_to_ne(*cmd_vel)
@@ -372,7 +377,7 @@ class VmasModelsROSInterface(Node):
             agent.mytime += self.action_dt
 
     def stop_all_agents(self):
-        for agent in self.agents:
+        for agent in self.world.agents:
             agent.state_buffer = [] 
             agent.timer.cancel()
             agent.send_zero_velocity()
@@ -389,7 +394,7 @@ class VmasModelsROSInterface(Node):
         # Reset step count and timers
         self.step_count = 0
         self.timer = self.create_timer(self.action_dt, self.timer_callback)
-        for agent in self.agents:
+        for agent in self.world.agents:
             agent.mytime = 0
             agent.timer = self.create_timer(agent.obs_dt, agent.collect_observation)
         self.get_logger().info("Starting agents with new instruction.")
@@ -402,16 +407,26 @@ def get_runtime_log_dir():
     return log_dir
 
 
-@hydra.main(config_path=None, config_name=None, version_base="1.1")
+# Manually parse config_path and config_name from CLI
+def extract_initial_config():
+    config_path, config_name = None, None
+    for arg in sys.argv:
+        if arg.startswith("config_path="):
+            config_path = arg.split("=", 1)[1]
+        elif arg.startswith("config_name="):
+            config_name = arg.split("=", 1)[1]
+    return config_path, config_name
+
+config_path, config_name = extract_initial_config()
+
+@hydra.main(config_path=config_path, config_name=config_name, version_base="1.1")
 def main(cfg: DictConfig) -> None:
     rclpy.init()
 
-    # Parse config and restore_path from command-line overrides
-    config_path = cfg.config_path
-    restore_path = cfg.restore_path
+    restore_path = cfg.restore_path  # This should now work
 
-    # Load actual config using OmegaConf if necessary
-    full_config_path = Path(config_path) / cfg.config_name
+    # Optionally re-load the config (if merging CLI overrides etc.)
+    full_config_path = Path(config_path) / config_name
     user_cfg = OmegaConf.load(full_config_path)
     cfg = OmegaConf.merge(user_cfg, cfg)
 

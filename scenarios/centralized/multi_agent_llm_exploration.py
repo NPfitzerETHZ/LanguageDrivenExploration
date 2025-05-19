@@ -121,7 +121,7 @@ class MyLanguageScenario(BaseScenario):
         
         # Initialize Important Stuff
         if self.use_decoder: load_decoder(self.decoder_model_path, self.embedding_size, self.device)
-        if self.llm_activate: load_task_data(
+        if self.llm_activate and (self.use_grid_data or self.use_class_data or self.use_max_targets_data): load_task_data(
             json_path=self.data_json_path,
             use_decoder=self.use_decoder,
             use_grid_data=self.use_grid_data,
