@@ -143,7 +143,7 @@ def load_scenario_config_yaml(config, env):
     env.n_lidar_rays_entities = cfg.n_lidar_rays_entities
     env.n_lidar_rays_agents = cfg.n_lidar_rays_agents
     env.use_velocity_controller = cfg.use_velocity_controller
-    env.max_agent_observation_radius = env.max_agent_observation_radius
+    env.max_agent_observation_radius = cfg.max_agent_observation_radius
     env.prediction_horizon_steps = cfg.prediction_horizon_steps
 
     # === Agent Communication & GNNs ===

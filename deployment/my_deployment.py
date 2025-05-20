@@ -166,8 +166,9 @@ class Agent:
         self.node.log_file.flush()
     
 class World:
-    def __init__(self, agents: List[Agent]):
+    def __init__(self, agents: List[Agent], dt: float):
         self.agents = agents
+        self.dt = dt
 
 class VmasModelsROSInterface(Node):
 
@@ -220,12 +221,11 @@ class VmasModelsROSInterface(Node):
             )
             agents.append(agent)
         
-        self.world = World(agents)
-        
         # Create action loop
         self.action_dt = deployment_config.action_dt
         self.max_steps = deployment_config.max_steps
         self.step_count = 0
+        self.world = World(agents,self.action_dt)
         
         self.get_logger().info("ROS2 starting ..")
         
