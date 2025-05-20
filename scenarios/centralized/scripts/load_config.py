@@ -56,6 +56,7 @@ def load_scenario_config(kwargs, env):
     # === Observation Settings ===
     env.observe_grid = kwargs.pop("observe_grid", True)
     env.observe_targets = kwargs.pop("observe_targets", True)
+    env.observe_agents = kwargs.pop("observe_agents", False)
     env.observe_pos_history = kwargs.pop("observe_pos_history", True)
     env.observe_vel_history = kwargs.pop("observe_vel_history", False)
     env.use_grid_data = kwargs.pop("use_grid_data", True)
@@ -153,6 +154,7 @@ def load_scenario_config_yaml(config, env):
     # === Observation Settings ===
     env.observe_grid = cfg.observe_grid
     env.observe_targets = cfg.observe_targets
+    env.observe_agents = cfg.observe_agents
     env.observe_pos_history = cfg.observe_pos_history
     env.observe_vel_history = cfg.observe_vel_history
     env.use_grid_data = cfg.use_grid_data

@@ -252,12 +252,12 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
         for i in range(packet_size):
             if do_uniform[i] or num_valid[i] == 0:
                 # 50% at conf=0, 25% at conf=1, 0% at conf=2 → uniform over full grid
-                chosen_flat_idx[i] = torch.randint(0, grid_size, (1,), device=flat_grid.device)
+                chosen_flat_idx[i] = torch.randint(1, grid_size-1, (1,), device=flat_grid.device)
             else:
                 probs = masked_grid[i]
                 psum  = probs.sum()
                 if psum == 0:
-                    chosen_flat_idx[i] = torch.randint(0, grid_size, (1,), device=flat_grid.device)
+                    chosen_flat_idx[i] = torch.randint(1, grid_size-1, (1,), device=flat_grid.device)
                 else:
                     chosen_flat_idx[i] = torch.multinomial(probs/psum, 1)
 
@@ -396,6 +396,7 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
                         vec = self.get_target_pose_in_heading(envs,envs.numel(), confidence_level[envs])
                         # Place the target in the grid (and mark as visited, this a test)
                         self.grid_targets[envs, vec[:,1].unsqueeze(1).int(), vec[:,0].unsqueeze(1).int()] = (TARGET + j)
+                        self.gaussian_heading(envs,t,vec)
                         # Store world position
                         target_poses[mask,j,t] = self.grid_to_world(vec[:,0]-pad, vec[:,1]-pad)
             else:
@@ -408,7 +409,7 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
         return obstacle_centers.squeeze(-2), agent_centers.squeeze(-2), target_poses
     
     
-    def gaussian_heading(self, env_index, t_index, pos, sigma_coef=0.1):
+    def gaussian_heading(self, env_index, t_index, pos, sigma_coef=0.15):
         """
         pos: (batch_size, 2)
         env_index: (batch_size,)

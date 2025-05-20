@@ -62,7 +62,7 @@ task.config = {
     "y_semidim": 3.0,
     "covering_range": 0.15,
     "agent_radius": 0.17,
-    "n_obstacles": 10,
+    "n_obstacles": 5,
 
     # === Agent/Target Counts & Behavior ===
     "n_agents": 3,
@@ -75,7 +75,7 @@ task.config = {
     # === Rewards ===
     "shared_target_reward": True,
     "shared_final_reward": True,
-    "agent_collision_penalty": -0.75,
+    "agent_collision_penalty": -0.0,
     "obstacle_collision_penalty": -0.5,
     "covering_rew_coeff": 7.0,
     "false_covering_penalty_coeff": -0.25,
@@ -88,8 +88,8 @@ task.config = {
     "use_expo_search_rew": True,
     "grid_visit_threshold": 4,
     "exploration_rew_coeff": -0.05,
-    "new_cell_rew_coeff": 0.05,
-    "heading_exploration_rew_coeff": 20.0,
+    "new_cell_rew_coeff": 0.02,
+    "heading_exploration_rew_coeff": 1.0,
 
     # === Lidar & Sensing ===
     "use_lidar": False,
@@ -106,13 +106,14 @@ task.config = {
 
     # === Observation Settings ===
     "observe_grid": True,
-    "observe_targets": False,
+    "observe_targets": True,
+    "observe_agents": False,
     "observe_pos_history": False,
     "observe_vel_history": False,
     "use_grid_data": True,
     "use_class_data": False,
     "use_max_targets_data": False,
-    "use_confidence_data": False,
+    "use_confidence_data": True,
 
     # === Grid Settings ===
     "num_grid_cells": 400,
@@ -133,7 +134,7 @@ task.config = {
     "llm_activate": True,
 
     # === External Inputs ===
-    "data_json_path": "data/language_data_complete_multi_target_color_scale.json",
+    "data_json_path": "data/language_data_complete_multi_target_color_scale_confidence.json",
     "decoder_model_path": "decoders/llm0_decoder_model_grid_single_target_color.pth",
     "use_decoder": False,
 
@@ -178,7 +179,7 @@ experiment_config.train_device = train_device
 experiment_config.render = True
 experiment_config.evaluation = True
 experiment_config.share_policy_params = True # Policy parameter sharing on
-experiment_config.loggers = ["csv"]
+experiment_config.loggers = ["wandb"]
 experiment_config.max_n_frames = 18_000_000 # Runs one iteration, change to 50_000_000 for full training
 experiment_config.evaluation_interval = 120_000
 experiment_config.on_policy_collected_frames_per_batch = 30_000

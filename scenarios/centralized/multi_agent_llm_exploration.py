@@ -365,7 +365,8 @@ class MyLanguageScenario(BaseScenario):
                 geoms.append(line)
 
             # Render grid cells with color based on visit normalization
-            heading_grid = grid.grid_heading[env_index,1:-1,1:-1]
+            #heading_grid = grid.grid_heading[env_index,1:-1,1:-1]
+            heading_grid = grid.grid_gaussian_heading.max(dim=1).values[env_index,1:-1,1:-1]
             value_grid = grid.grid_visits_sigmoid[env_index,1:-1,1:-1]
             for i in range(heading_grid.shape[1]):
                 for j in range(heading_grid.shape[0]):

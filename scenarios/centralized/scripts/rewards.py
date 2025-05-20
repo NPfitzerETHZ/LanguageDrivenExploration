@@ -153,9 +153,14 @@ def compute_exploration_rewards(agent, pos, env):
     )
 
     if env.llm_activate:
-        agent.exploration_rew += env.occupancy_grid.compute_region_heading_bonus_normalized(
+        # agent.exploration_rew += env.occupancy_grid.compute_region_heading_bonus_normalized(
+        #     pos, heading_exploration_rew_coeff=env.heading_exploration_rew_coeff
+        # )
+        
+        agent.exploration_rew += env.occupancy_grid.compute_gaussian_heading_bonus(
             pos, heading_exploration_rew_coeff=env.heading_exploration_rew_coeff
         )
+        
         env.occupancy_grid.update_heading_coverage_ratio()
 
         if env.comm_dim > 0:
