@@ -81,28 +81,49 @@ def observation(agent, env):
 
     # === Pose ===
     if not env.use_gnn:
-        
-        # Collect neighbor distances and angles
-        neighbor_polar = []
-        max_radius = 0.3
-        for idx, other_agent in enumerate(env.world.agents):
-            if other_agent is agent:
-                continue
-            rel_pos = other_agent.state.pos - agent.state.pos
-            rel_pos_norm = rel_pos / torch.tensor([env.x_semidim, env.y_semidim], device=env.device)
-            distance = torch.norm(rel_pos_norm,dim=-1)
-            distance = torch.clamp(distance, max=max_radius)
-            angle = torch.atan2(rel_pos_norm[:,1], rel_pos_norm[:,0])
-            angle = torch.where(distance >= max_radius - 1e-6, torch.tensor(0.0, device=env.device), angle)
-            neighbor_polar.append(torch.stack([distance, angle],dim=-1))
+        max_radius = env.max_agent_observation_radius
+        horizon_dt = env.prediction_horizon_steps * env.world.dt
 
-        if neighbor_polar:
-            neighbor_polar_tensor = torch.cat(neighbor_polar, dim=-1)
+        # [B,2]
+        agent_future_pos = agent.state.pos + agent.state.vel * horizon_dt
+
+        other_agents = [a for a in env.world.agents if a is not agent]
+        if other_agents:
+            # [B,A,2]
+            other_positions   = torch.stack([a.state.pos for a in other_agents],   dim=1)
+            other_velocities  = torch.stack([a.state.vel for a in other_agents],   dim=1)
+            other_future_pos  = other_positions + other_velocities * horizon_dt
+
+            rel_pos      = other_future_pos - agent_future_pos.unsqueeze(1)            # [B,A,2]
+            rel_pos_norm = rel_pos / torch.tensor([env.x_semidim, env.y_semidim], device=env.device)
+
+            raw_distances = torch.norm(rel_pos_norm, dim=-1)  # [B,A]
+            radius_norm = env.agent_radius / torch.tensor([env.x_semidim, env.y_semidim], device=env.device).norm()
+            adjusted_distances = raw_distances - 2 * radius_norm
+            adjusted_distances = torch.clamp(adjusted_distances, min=0.0, max=max_radius)
+            distances = adjusted_distances
+
+            angles = torch.atan2(rel_pos_norm[...,1], rel_pos_norm[...,0])             # [B,A]
+            angles = torch.where(distances >= max_radius - 1e-6,
+                                torch.zeros_like(angles), angles)
+
+            neighbor_polar_tensor = torch.stack([distances, angles], dim=-1)          # [B,A,2]
+
+            # sort per batch by distance
+            #sorted_idx  = torch.argsort(neighbor_polar_tensor[...,0], dim=1)           # [B,A]
+            #idx_exp     = sorted_idx.unsqueeze(-1).expand(-1, -1, 2)                   # [B,A,2]
+            #neighbor_polar_tensor = torch.gather(neighbor_polar_tensor, dim=1, index=idx_exp)
+
+            # flatten to [B, A*2]
+            neighbor_polar_tensor = neighbor_polar_tensor.flatten(start_dim=1)         # [B, A*2]
         else:
-            neighbor_polar_tensor = torch.zeros(0, device=env.device)
+            B = agent.state.pos.size(0)
+            neighbor_polar_tensor = torch.zeros((B, 0), device=env.device)
 
         obs_components.append(neighbor_polar_tensor)
         obs_components.extend([pos_norm, vel_norm])
+
+
 
     # === Final Output ===
     obs = torch.cat([comp for comp in obs_components if comp is not None], dim=-1)

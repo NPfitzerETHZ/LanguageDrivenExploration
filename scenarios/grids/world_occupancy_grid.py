@@ -11,6 +11,7 @@ from typing import List
 
 LARGE = 10
 DECODER_OUTPUT_SIZE = 25
+CONFIDENCE_MAX = 2
 
 train_dict = None
 total_dict_size = None
@@ -48,6 +49,7 @@ def load_task_data(
     use_grid_data,
     use_class_data,
     use_max_targets_data,
+    use_confidence_data,
     device='cpu'):
     global train_dict
     global total_dict_size
@@ -90,6 +92,12 @@ def load_task_data(
             output["max_targets"] = torch.tensor(max_targets, dtype=torch.float32, device=device)
         else:
             print("Max target not found in the dataset, so reverting back to randomized max num")
+        
+        if all("confidence" in entry for entry in dataset) and use_confidence_data:
+            max_targets = [entry["confidence"] for entry in dataset]
+            output["confidence"] = torch.tensor(max_targets, dtype=torch.float32, device=device)
+        else:
+            print("Confidence not found in the dataset, so reverting back to default confidence")
 
         return output
 
@@ -143,11 +151,12 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
         
             self.target_attribute_embedding_found = False
             self.max_target_embedding_found = False
+            self.confidence_embedding_found = False
         
         self.num_targets_per_class = num_targets_per_class
         
     
-    def sample_dataset(self,env_index, packet_size, target_class, max_target_count, num_target_groups):
+    def sample_dataset(self,env_index, packet_size, target_class, max_target_count, confidence_level):
         
         sample_indices = torch.randperm(total_dict_size)[:packet_size]
         
@@ -175,6 +184,12 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
             self.max_target_embedding_found = True
         else:
             max_target_count[env_index] = self.num_targets_per_class #+ 1 # never stop looking
+        
+        if "confidence" in task_dict:
+            confidence_level[env_index] = task_dict["confidence"].unsqueeze(1).int() 
+            self.confidence_embedding_found = True
+        else:
+            confidence_level[env_index] = CONFIDENCE_MAX 
 
         if "grid" in task_dict:
             raw_grids = task_dict["grid"].reshape(-1, *DATA_GRID_SHAPE).unsqueeze(1)
@@ -212,31 +227,43 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
 
     def get_target_pose_in_heading(
         self,
-        env_index: torch.Tensor,
-        packet_size: int):
-        
+        env_index: torch.Tensor,         # (B,)
+        packet_size: int,
+        confidence_level: torch.Tensor   # (B,) ints in {0,1,... CONFIDENCE_MAX}
+    ):
+        # --- Prep ROI mask & weights ----------------------------------------------------
         flat_grid = self.grid_heading[env_index].view(packet_size, -1)  # (B, H*W)
-        
-        # Mask out values below the threshold
         valid_mask = flat_grid > 0.0005
-        masked_grid = flat_grid * valid_mask  # Zero out invalid cells
+        masked_grid = flat_grid * valid_mask.float()
+        num_valid = valid_mask.sum(dim=1)
 
-        num_valid = valid_mask.sum(dim=1)  # (B,)
+        # --- Compute p_random so conf=2→0.0, conf=1→0.25, conf=0→0.5 ------------------
+        CONFIDENCE_MAX = 2.0
+        p_random = (CONFIDENCE_MAX - confidence_level.float()) / CONFIDENCE_MAX * 0.5
 
-        # Initialize selection mask
-        selection_mask = torch.zeros_like(flat_grid, dtype=torch.bool)
+        # --- Decide per-sample whether to go uniform ----------------------------------
+        uni        = torch.rand(packet_size, device=flat_grid.device)
+        do_uniform = uni < p_random.squeeze(1)      # (B,) bool
+
+        # --- Sample indices ------------------------------------------------------------
+        chosen_flat_idx = torch.empty(packet_size, dtype=torch.long, device=flat_grid.device)
+        grid_size       = flat_grid.size(1)
 
         for i in range(packet_size):
-            if num_valid[i] > 0:
+            if do_uniform[i] or num_valid[i] == 0:
+                # 50% at conf=0, 25% at conf=1, 0% at conf=2 → uniform over full grid
+                chosen_flat_idx[i] = torch.randint(0, grid_size, (1,), device=flat_grid.device)
+            else:
                 probs = masked_grid[i]
-                if probs.sum() == 0:
-                    continue  # Avoid division by zero if all weights are zero
-                sampled_idx = torch.multinomial(probs, 1)
-                selection_mask[i, sampled_idx] = True
+                psum  = probs.sum()
+                if psum == 0:
+                    chosen_flat_idx[i] = torch.randint(0, grid_size, (1,), device=flat_grid.device)
+                else:
+                    chosen_flat_idx[i] = torch.multinomial(probs/psum, 1)
 
-        chosen_flat_idx = selection_mask.float().argmax(dim=1)
+        # --- Convert back to x, y ------------------------------------------------------
         y = chosen_flat_idx // self.padded_grid_width
-        x = chosen_flat_idx % self.padded_grid_width
+        x = chosen_flat_idx %  self.padded_grid_width
 
         return torch.stack([x, y], dim=1) # (B, 2)
     
@@ -311,6 +338,7 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
         target_groups: List[List[Landmark]],
         target_class: torch.Tensor,
         max_target_count: torch.Tensor,
+        confidence_level: torch.Tensor,
         padding = True):
         
         """ This function handles the scenario reset. It is unbelievably complicated."""
@@ -342,7 +370,7 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
         
         if use_embedding: # Case we sample the dataset for the new scenario + Embedding
             if train_dict is not None and total_dict_size is not None:
-                self.sample_dataset(env_index, packet_size, target_class, max_target_count, num_target_groups)
+                self.sample_dataset(env_index, packet_size, target_class, max_target_count, confidence_level)
         else: # Case that we are not using the embedding for robustness
             max_target_count[env_index] = num_targets_per_class
             target_class[env_index] = torch.randint(0, num_target_groups, (packet_size,1), dtype=torch.int, device=self.device)
@@ -354,18 +382,18 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
             mask = (target_class[env_index] == j).squeeze(1)
             
             if use_embedding:
-                envs = env_index[mask]
-                
-                self.searching_hinted_target[envs] = True
 
-                # Cancel mask: Environments which are not targetting class j or don't meet the valid heading threshold
+                # Cancel mask: Environments which are not targetting class j but target is still randomized
                 declined_targets_mask = (~mask).clone()
                 unknown_targets[j] = declined_targets_mask
+                
+                envs = env_index[mask]
+                self.searching_hinted_target[envs] = True
         
                 if mask.any():
                     for t in range(num_targets_per_class):
                         # Get new target positions
-                        vec = self.get_target_pose_in_heading(envs,envs.numel())
+                        vec = self.get_target_pose_in_heading(envs,envs.numel(), confidence_level[envs])
                         # Place the target in the grid (and mark as visited, this a test)
                         self.grid_targets[envs, vec[:,1].unsqueeze(1).int(), vec[:,0].unsqueeze(1).int()] = (TARGET + j)
                         # Store world position

@@ -45,6 +45,8 @@ def load_scenario_config(kwargs, env):
     env.n_lidar_rays_entities = kwargs.pop("n_lidar_rays_entities", 8)
     env.n_lidar_rays_agents = kwargs.pop("n_lidar_rays_agents", 12)
     env.use_velocity_controller = kwargs.pop("use_velocity_controller", True)
+    env.max_agent_observation_radius = kwargs.pop("max_agent_observation_radius", 0.4)
+    env.prediction_horizon_steps = kwargs.pop("prediction_horizon_steps", 1)
 
     # === Agent Communication & GNNs ===
     env.use_gnn = kwargs.pop("use_gnn", False)
@@ -59,6 +61,7 @@ def load_scenario_config(kwargs, env):
     env.use_grid_data = kwargs.pop("use_grid_data", True)
     env.use_class_data = kwargs.pop("use_class_data", True)
     env.use_max_targets_data = kwargs.pop("use_max_targets_data", True)
+    env.use_confidence_data = kwargs.pop("use_confidence_data", False)
 
     # === Grid Settings ===
     env.num_grid_cells = kwargs.pop("num_grid_cells", 400)
@@ -139,6 +142,8 @@ def load_scenario_config_yaml(config, env):
     env.n_lidar_rays_entities = cfg.n_lidar_rays_entities
     env.n_lidar_rays_agents = cfg.n_lidar_rays_agents
     env.use_velocity_controller = cfg.use_velocity_controller
+    env.max_agent_observation_radius = env.max_agent_observation_radius
+    env.prediction_horizon_steps = cfg.prediction_horizon_steps
 
     # === Agent Communication & GNNs ===
     env.use_gnn = cfg.use_gnn
@@ -153,6 +158,7 @@ def load_scenario_config_yaml(config, env):
     env.use_grid_data = cfg.use_grid_data
     env.use_class_data = cfg.use_class_data
     env.use_max_targets_data = cfg.use_max_targets_data
+    env.use_confidence_data = cfg.use_confidence_data
 
     # === Grid Settings ===
     env.num_grid_cells = cfg.num_grid_cells

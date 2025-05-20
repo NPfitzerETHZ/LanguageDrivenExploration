@@ -127,6 +127,7 @@ class MyLanguageScenario(BaseScenario):
             use_grid_data=self.use_grid_data,
             use_class_data=self.use_class_data,
             use_max_targets_data=self.use_max_targets_data,
+            use_confidence_data=self.use_confidence_data,
             device=self.device)
         self.occupancy_grid = WorldOccupancyGrid(
             batch_size=batch_dim,
@@ -173,6 +174,7 @@ class MyLanguageScenario(BaseScenario):
         
         self.max_target_count = torch.ones(batch_dim, dtype=torch.int, device=self.device) * self.n_targets_per_class # Initialized to n_targets (ratio)
         self.target_class = torch.zeros(batch_dim, dtype=torch.int, device=self.device)
+        self.confidence_level = torch.zeros(batch_dim, dtype=torch.int, device=self.device)
         self.targets_pos = torch.zeros((batch_dim,self.n_target_classes,self.n_targets_per_class,2), device=self.device)
         
         self.covered_targets = torch.zeros(batch_dim, self.n_target_classes, self.n_targets_per_class, device=self.device)
@@ -250,7 +252,7 @@ class MyLanguageScenario(BaseScenario):
             env_index = torch.atleast_1d(env_index)
             
         obs_poses, agent_poses, target_poses = self.occupancy_grid.spawn_llm_map(
-            env_index, self.n_obstacles, self.n_agents, self.target_groups, self.target_class, self.max_target_count
+            env_index, self.n_obstacles, self.n_agents, self.target_groups, self.target_class, self.max_target_count, self.confidence_level
         )
 
         for i, idx in enumerate(env_index):
@@ -312,8 +314,8 @@ class MyLanguageScenario(BaseScenario):
             # Progressively decrease the size of the heading region
             # This is to promote faster convergence to the target.
         
-        if (self.step_count % (20 * 250) == 0 and self.agent_collision_penalty > -1.5): # Check this
-            self.agent_collision_penalty -= 0.25
+        #if (self.step_count % (20 * 250) == 0 and self.agent_collision_penalty > -1.5): # Check this
+            #self.agent_collision_penalty -= 0.25
  
                 
     def process_action(self, agent: Agent):

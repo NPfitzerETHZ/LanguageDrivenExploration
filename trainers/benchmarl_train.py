@@ -61,8 +61,8 @@ task.config = {
     "x_semidim": 3.0,
     "y_semidim": 3.0,
     "covering_range": 0.15,
-    "agent_radius": 0.16,
-    "n_obstacles": 0,
+    "agent_radius": 0.17,
+    "n_obstacles": 10,
 
     # === Agent/Target Counts & Behavior ===
     "n_agents": 3,
@@ -75,7 +75,7 @@ task.config = {
     # === Rewards ===
     "shared_target_reward": True,
     "shared_final_reward": True,
-    "agent_collision_penalty": -0.25,
+    "agent_collision_penalty": -0.75,
     "obstacle_collision_penalty": -0.5,
     "covering_rew_coeff": 7.0,
     "false_covering_penalty_coeff": -0.25,
@@ -96,6 +96,8 @@ task.config = {
     "n_lidar_rays_entities": 8,
     "n_lidar_rays_agents": 12,
     "use_velocity_controller": True,
+    "max_agent_observation_radius": 0.3,
+    "prediction_horizon_steps": 1,
 
     # === Agent Communication & GNNs ===
     "use_gnn": use_gnn,
@@ -110,6 +112,7 @@ task.config = {
     "use_grid_data": True,
     "use_class_data": False,
     "use_max_targets_data": False,
+    "use_confidence_data": False,
 
     # === Grid Settings ===
     "num_grid_cells": 400,
@@ -119,7 +122,7 @@ task.config = {
     "agent_weight": 1.0,
     "agent_v_range": 1.0,
     "agent_a_range": 1.0,
-    "min_collision_distance": 0.1,
+    "min_collision_distance": 0.15,
     "linear_friction": 0.1,
 
     # === Histories ===
@@ -144,8 +147,8 @@ task.config = {
 # Loads from "benchmarl/conf/algorithm/mappo.yaml"
 algorithm_config = MappoConfig.get_from_yaml()
 algorithm_config.entropy_coef = 0.0000
-model_config = MlpConfig(num_cells=[256,256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
-critic_model_config = MlpConfig(num_cells=[256,256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
+model_config = MlpConfig(num_cells=[512,256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
+critic_model_config = MlpConfig(num_cells=[512,256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
 
 if use_gnn:
     
@@ -175,7 +178,7 @@ experiment_config.train_device = train_device
 experiment_config.render = True
 experiment_config.evaluation = True
 experiment_config.share_policy_params = True # Policy parameter sharing on
-experiment_config.loggers = ["wandb"]
+experiment_config.loggers = ["csv"]
 experiment_config.max_n_frames = 18_000_000 # Runs one iteration, change to 50_000_000 for full training
 experiment_config.evaluation_interval = 120_000
 experiment_config.on_policy_collected_frames_per_batch = 30_000
@@ -185,11 +188,10 @@ experiment_config.on_policy_n_minibatch_iters = 45
 
 
 # Catastrophic Reward Decay Counter-Measures:
-if use_gnn:
-    algorithm_config.critic_coef = 0.5
-    algorithm_config.loss_critic_type = 'smooth_l1'
-    experiment_config.clip_grad_val = 2.
-    experiment_config.on_policy_n_minibatch_iters = 20
+#algorithm_config.critic_coef = 0.5
+#algorithm_config.loss_critic_type = 'smooth_l1'
+experiment_config.clip_grad_val = 2.
+experiment_config.on_policy_n_minibatch_iters = 20
 
 
 experiment_config.save_folder = Path(os.path.dirname(os.path.realpath(__file__))) / "experiments"
