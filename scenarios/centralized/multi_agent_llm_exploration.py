@@ -379,10 +379,12 @@ class MyLanguageScenario(BaseScenario):
                         heading_lvl = head.item()
                         if heading_lvl >= 0.:
                             if self.n_targets > 0:
-                                color = (self.target_colors[self.target_class[env_index]] * 0.8 * heading_lvl * self.num_grid_cells * 0.1)
+                                #color = (self.target_colors[self.target_class[env_index]] * 0.8 * heading_lvl * self.num_grid_cells * 0.1)
+                                color = (self.target_colors[self.target_class[env_index]] * 0.8 * heading_lvl)
                             else:
                                 # redish gradient based on heading
-                                color = (1.0, 1.0 - heading_lvl * self.num_grid_cells * 0.1, 1.0 - heading_lvl * self.num_grid_cells * 0.1)  # Redish gradient based on heading
+                                color = (1.0, 1.0 - heading_lvl, 1.0 - heading_lvl)
+                                #color = (1.0, 1.0 - heading_lvl * self.num_grid_cells * 0.1, 1.0 - heading_lvl * self.num_grid_cells * 0.1)  # Redish gradient based on heading
                             rect = rendering.FilledPolygon([(x, y), (x + grid.cell_size_x * self.x_semidim, y), 
                                                             (x + grid.cell_size_x * self.x_semidim, y + grid.cell_size_y * self.y_semidim), (x, y + grid.cell_size_y * self.y_semidim)])
                             rect.set_color(*color)

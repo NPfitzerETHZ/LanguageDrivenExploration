@@ -409,7 +409,7 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
         return obstacle_centers.squeeze(-2), agent_centers.squeeze(-2), target_poses
     
     
-    def gaussian_heading(self, env_index, t_index, pos, sigma_coef=0.15):
+    def gaussian_heading(self, env_index, t_index, pos, sigma_coef=0.1):
         """
         pos: (batch_size, 2)
         env_index: (batch_size,)

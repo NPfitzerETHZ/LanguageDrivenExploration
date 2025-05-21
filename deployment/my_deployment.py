@@ -12,6 +12,7 @@ from torchrl.envs.utils import ExplorationType, set_exploration_type
 from sentence_transformers import SentenceTransformer
 from omegaconf import DictConfig, OmegaConf
 import hydra
+import speech_recognition as sr
 
 from tensordict import TensorDict
 from benchmarl.utils import DEVICE_TYPING
@@ -398,6 +399,46 @@ class VmasModelsROSInterface(Node):
             agent.mytime = 0
             agent.timer = self.create_timer(agent.obs_dt, agent.collect_observation)
         self.get_logger().info("Starting agents with new instruction.")
+
+
+    def prompt_for_new_speech_instruction(self):
+        recognizer = sr.Recognizer()
+        mic = sr.Microphone()
+
+        self.get_logger().info("Listening for new instruction...")
+
+        try:
+            with mic as source:
+                recognizer.adjust_for_ambient_noise(source)
+                audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
+            new_sentence = recognizer.recognize_google(audio)
+            self.get_logger().info(f"Received spoken instruction: {new_sentence}")
+        except sr.WaitTimeoutError:
+            self.get_logger().warn("Listening timed out.")
+            return
+        except sr.UnknownValueError:
+            self.get_logger().warn("Could not understand the audio.")
+            return
+        except sr.RequestError as e:
+            self.get_logger().error(f"Speech recognition service error: {e}")
+            return
+
+        try:
+            embedding = torch.tensor(self.llm.encode([new_sentence]), device=self.device).squeeze(0)
+        except Exception as e:
+            self.get_logger().error(f"Failed to encode instruction: {e}")
+            return
+
+        self.occupancy_grid.embeddings[0] = embedding
+
+        # Reset step count and timers
+        self.step_count = 0
+        self.timer = self.create_timer(self.action_dt, self.timer_callback)
+        for agent in self.world.agents:
+            agent.mytime = 0
+            agent.timer = self.create_timer(agent.obs_dt, agent.collect_observation)
+
+        self.get_logger().info("Starting agents with new (spoken) instruction.")
 
 def get_runtime_log_dir():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

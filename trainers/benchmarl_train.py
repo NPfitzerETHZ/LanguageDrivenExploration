@@ -89,7 +89,7 @@ task.config = {
     "grid_visit_threshold": 4,
     "exploration_rew_coeff": -0.05,
     "new_cell_rew_coeff": 0.02,
-    "heading_exploration_rew_coeff": 1.0,
+    "heading_exploration_rew_coeff": 0.5, #30,
 
     # === Lidar & Sensing ===
     "use_lidar": False,
