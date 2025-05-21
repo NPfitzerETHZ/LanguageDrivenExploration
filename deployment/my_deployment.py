@@ -173,11 +173,12 @@ class World:
 
 class VmasModelsROSInterface(Node):
 
-    def __init__(self, config: DictConfig, log_dir: Path, restore_path: str):
+    def __init__(self, config: DictConfig, log_dir: Path, restore_path: str, use_speech_to_text: bool):
         super().__init__("vmas_ros_interface")
         self.device = config.device 
         deployment_config = config["deployment"]
         self.llm = SentenceTransformer(deployment_config.llm_model, device="cpu")
+        self.use_speech_to_text = use_speech_to_text
 
         # Grid Config
         grid_config = config["grid_config"]
@@ -282,7 +283,10 @@ class VmasModelsROSInterface(Node):
         self.timer.cancel()
         self.stop_all_agents()
         self.occupancy_grid.reset_all()
-        self.prompt_for_new_instruction()
+        if self.use_speech_to_text:
+            self.prompt_for_new_speech_instruction()
+        else:
+            self.prompt_for_new_instruction()
 
     def _collect_observations(self):
         obs_list, pos_list, vel_list = [], [], []
@@ -402,25 +406,29 @@ class VmasModelsROSInterface(Node):
 
 
     def prompt_for_new_speech_instruction(self):
+        
         recognizer = sr.Recognizer()
         mic = sr.Microphone()
 
-        self.get_logger().info("Listening for new instruction...")
+        self.get_logger().info("Listening for new instruction... (or press Enter to type instead)")
 
         try:
             with mic as source:
                 recognizer.adjust_for_ambient_noise(source)
                 audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
             new_sentence = recognizer.recognize_google(audio)
+            print(f"\n[Speech Recognized] \"{new_sentence}\"\n")
             self.get_logger().info(f"Received spoken instruction: {new_sentence}")
-        except sr.WaitTimeoutError:
-            self.get_logger().warn("Listening timed out.")
-            return
-        except sr.UnknownValueError:
-            self.get_logger().warn("Could not understand the audio.")
-            return
-        except sr.RequestError as e:
-            self.get_logger().error(f"Speech recognition service error: {e}")
+        except (sr.WaitTimeoutError, sr.UnknownValueError, sr.RequestError) as e:
+            self.get_logger().warn(f"Speech recognition failed: {e}")
+            user_input = input("Speech recognition failed. Type instruction or press Enter to try again: ").strip()
+            if user_input:
+                new_sentence = user_input
+            else:
+                self.get_logger().info("Retrying speech recognition...")
+                return self.prompt_for_new_speech_instruction()
+        except Exception as e:
+            self.get_logger().error(f"Unexpected error during speech recognition: {e}")
             return
 
         try:
@@ -438,7 +446,8 @@ class VmasModelsROSInterface(Node):
             agent.mytime = 0
             agent.timer = self.create_timer(agent.obs_dt, agent.collect_observation)
 
-        self.get_logger().info("Starting agents with new (spoken) instruction.")
+        self.get_logger().info("Starting agents with new instruction.")
+
 
 def get_runtime_log_dir():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -465,6 +474,7 @@ def main(cfg: DictConfig) -> None:
     rclpy.init()
 
     restore_path = cfg.restore_path  # This should now work
+    use_speech_to_text = cfg.use_speech_to_text
 
     # Optionally re-load the config (if merging CLI overrides etc.)
     full_config_path = Path(config_path) / config_name
@@ -483,9 +493,14 @@ def main(cfg: DictConfig) -> None:
     ros_interface_node = VmasModelsROSInterface(
         config=cfg,
         log_dir=log_dir,
-        restore_path=str(restore_path)
+        restore_path=str(restore_path),
+        use_speech_to_text=use_speech_to_text
     )
-    ros_interface_node.prompt_for_new_instruction()
+    
+    if use_speech_to_text:
+        ros_interface_node.prompt_for_new_speech_instruction()
+    else:
+        ros_interface_node.prompt_for_new_instruction()
 
     def sigint_handler(sig, frame):
         ros_interface_node.get_logger().info('SIGINT received. Stopping timer and sending zero velocity...')
