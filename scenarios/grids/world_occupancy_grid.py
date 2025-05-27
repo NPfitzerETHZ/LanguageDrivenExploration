@@ -11,7 +11,8 @@ from typing import List
 
 LARGE = 10
 DECODER_OUTPUT_SIZE = 25
-CONFIDENCE_MAX = 2
+CONFIDENCE_HIGH = 0.
+CONFIDENCE_LOW = 2.
 
 train_dict = None
 total_dict_size = None
@@ -183,13 +184,13 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
             max_target_count[env_index] = task_dict["max_targets"].unsqueeze(1).int() 
             self.max_target_embedding_found = True
         else:
-            max_target_count[env_index] = self.num_targets_per_class #+ 1 # never stop looking
+            max_target_count[env_index] = self.num_targets_per_class + 1 # never stop looking
         
         if "confidence" in task_dict:
             confidence_level[env_index] = task_dict["confidence"].unsqueeze(1).int() 
             self.confidence_embedding_found = True
         else:
-            confidence_level[env_index] = CONFIDENCE_MAX 
+            confidence_level[env_index] = CONFIDENCE_HIGH 
 
         if "grid" in task_dict:
             raw_grids = task_dict["grid"].reshape(-1, *DATA_GRID_SHAPE).unsqueeze(1)
@@ -229,43 +230,58 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
         self,
         env_index: torch.Tensor,         # (B,)
         packet_size: int,
-        confidence_level: torch.Tensor   # (B,) ints in {0,1,... CONFIDENCE_MAX}
-    ):
-        # --- Prep ROI mask & weights ----------------------------------------------------
-        flat_grid = self.grid_heading[env_index].view(packet_size, -1)  # (B, H*W)
-        valid_mask = flat_grid > 0.0005
-        masked_grid = flat_grid * valid_mask.float()
-        num_valid = valid_mask.sum(dim=1)
+        confidence_level: torch.Tensor,  # (B,) ints in {CONFIDENCE_HIGH … CONFIDENCE_LOW}
+        padding: bool
+    ) -> torch.Tensor:                   # → (B, 2)  [x, y] integer grid coords
+        # --------------------------------------------------------------------------
+        flat_grid   = self.grid_heading[env_index].view(packet_size, -1)     # (B, H*W)
+        valid_mask  = flat_grid > 5e-4
+        masked_grid = flat_grid * valid_mask
+        num_valid   = valid_mask.sum(dim=1)
 
-        # --- Compute p_random so conf=2→0.0, conf=1→0.25, conf=0→0.5 ------------------
-        CONFIDENCE_MAX = 2.0
-        p_random = (CONFIDENCE_MAX - confidence_level.float()) / CONFIDENCE_MAX * 0.5
+        # probability of falling back to a uniform pick
+        p_uniform = (CONFIDENCE_HIGH - confidence_level.squeeze(1).float()) \
+                    / (CONFIDENCE_HIGH - CONFIDENCE_LOW) * 0.5      # 50 % @ LOW → 0 % @ HIGH
 
-        # --- Decide per-sample whether to go uniform ----------------------------------
-        uni        = torch.rand(packet_size, device=flat_grid.device)
-        do_uniform = uni < p_random.squeeze(1)      # (B,) bool
+        rand_u      = torch.rand(packet_size, device=flat_grid.device)
+        do_uniform  = (rand_u < p_uniform) | (num_valid == 0)
 
-        # --- Sample indices ------------------------------------------------------------
-        chosen_flat_idx = torch.empty(packet_size, dtype=torch.long, device=flat_grid.device)
-        grid_size       = flat_grid.size(1)
+        # --------------------------------------------------------------------------
+        chosen_idx  = torch.empty(packet_size, dtype=torch.long,
+                                device=flat_grid.device)
 
-        for i in range(packet_size):
-            if do_uniform[i] or num_valid[i] == 0:
-                # 50% at conf=0, 25% at conf=1, 0% at conf=2 → uniform over full grid
-                chosen_flat_idx[i] = torch.randint(1, grid_size-1, (1,), device=flat_grid.device)
-            else:
-                probs = masked_grid[i]
-                psum  = probs.sum()
-                if psum == 0:
-                    chosen_flat_idx[i] = torch.randint(1, grid_size-1, (1,), device=flat_grid.device)
-                else:
-                    chosen_flat_idx[i] = torch.multinomial(probs/psum, 1)
+        # --- uniform branch --------------------------------------------------------
+        if do_uniform.any():
+            n_uni                     = do_uniform.sum()
+            chosen_idx[do_uniform]    = torch.randint(
+                0, self.num_cells, (n_uni,), device=flat_grid.device
+            )
 
-        # --- Convert back to x, y ------------------------------------------------------
-        y = chosen_flat_idx // self.padded_grid_width
-        x = chosen_flat_idx %  self.padded_grid_width
+        # --- weighted-sampling branch ---------------------------------------------
+        if (~do_uniform).any():
+            probs          = masked_grid[~do_uniform]
+            probs_sum      = probs.sum(dim=1, keepdim=True)
+            probs          = probs / probs_sum               # safe: probs_sum>0 by construction
+            chosen_idx[~do_uniform] = torch.multinomial(probs, 1).squeeze(1)
 
-        return torch.stack([x, y], dim=1) # (B, 2)
+        # --------------------------------------------------------------------------
+        pad           = 1 if padding else 0
+        x = torch.empty_like(chosen_idx)
+        y = torch.empty_like(chosen_idx)
+
+        # coords for uniform picks (use non-padded grid, then add pad)
+        if do_uniform.any():
+            uni_idx        = chosen_idx[do_uniform]
+            y[do_uniform]  = uni_idx // self.grid_width  + pad
+            x[do_uniform]  = uni_idx %  self.grid_width  + pad
+
+        # coords for weighted picks (grid is already padded)
+        if (~do_uniform).any():
+            wtd_idx        = chosen_idx[~do_uniform]
+            y[~do_uniform] = wtd_idx // self.padded_grid_width
+            x[~do_uniform] = wtd_idx %  self.padded_grid_width
+
+        return torch.stack((x, y), dim=1)
     
     def generate_random_grid(
         self,
@@ -393,7 +409,7 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
                 if mask.any():
                     for t in range(num_targets_per_class):
                         # Get new target positions
-                        vec = self.get_target_pose_in_heading(envs,envs.numel(), confidence_level[envs])
+                        vec = self.get_target_pose_in_heading(envs,envs.numel(), confidence_level[envs], padding)
                         # Place the target in the grid (and mark as visited, this a test)
                         self.grid_targets[envs, vec[:,1].unsqueeze(1).int(), vec[:,0].unsqueeze(1).int()] = (TARGET + j)
                         self.gaussian_heading(envs,t,vec)
@@ -409,7 +425,7 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
         return obstacle_centers.squeeze(-2), agent_centers.squeeze(-2), target_poses
     
     
-    def gaussian_heading(self, env_index, t_index, pos, sigma_coef=0.1):
+    def gaussian_heading(self, env_index, t_index, pos, sigma_coef=0.17):
         """
         pos: (batch_size, 2)
         env_index: (batch_size,)
@@ -455,6 +471,12 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
         """ Update the ratio of heading cells covered by the agent. """
         num_heading_cells_covered = ((self.grid_heading > 0) & (self.grid_visits_sigmoid > 0)).sum(dim=(1, 2))
         self.heading_coverage_ratio = num_heading_cells_covered / self.num_heading_cells
+    
+    def update_multi_target_gaussian_heading(self, all_time_covered_targets: torch.Tensor, target_class):
+
+        # All found heading regions are reset
+        mask = all_time_covered_targets[torch.arange(0,self.batch_size),target_class]  # (batch, n_targets)
+        self.grid_gaussian_heading[mask] = 0.0
         
     def compute_coverage_ratio_bonus(self, coverage_action):
         """Reward if coverage action is close to self.heading_coverage_ratio"""
@@ -490,6 +512,7 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
     def compute_gaussian_heading_bonus(self,pos,heading_exploration_rew_coeff = 1.0):
         
         """ Reward increases as we approach the center of the heading region"""
+        heading_exploration_rew_coeff /= (0.05 * self.grid_height * self.grid_width)
         grid_x, grid_y = self.world_to_grid(pos, padding=True)
         heading_merged = self.grid_gaussian_heading.max(dim=1).values
         heading_val = heading_merged[torch.arange(pos.shape[0]),grid_y,grid_x]

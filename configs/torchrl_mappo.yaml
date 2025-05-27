@@ -1,7 +1,7 @@
 seed: 0
 
 env:
-  max_steps: 200
+  max_steps: 250
   scenario_name: "custom_scenario"  # Name of the scenario to be used
   scenario:
     n_agents: 4
@@ -11,7 +11,7 @@ env:
 model:
   shared_parameters: True
   centralised_critic: True  # MAPPO if True, IPPO if False
-  embedding_size: 3072
+  embedding_size: 1024
 
 collector:
   frames_per_batch: 50_000 # Frames sampled each sampling iteration
@@ -22,17 +22,17 @@ buffer:
   memory_size: ???
 
 loss:
-  gamma: 0.99
+  gamma: 0.95
   lmbda: 0.9
   entropy_eps: 0
-  entropy_coef: 0.0
+  entropy_coef: 0.01
   clip_epsilon: 0.2
 
 train:
-  num_epochs: 45  # optimization steps per batch of data collected
+  num_epochs: 20  # optimization steps per batch of data collected
   minibatch_size: 4096 # size of minibatches used in each epoch
-  lr: 5e-5
-  max_grad_norm: 5.0
+  lr: 2e-5
+  max_grad_norm: 1.0
   checkpoint_interval: 10
   checkpoint_dir: "/Users/nicolaspfitzer/ProrokLab/CustomScenarios/checkpoints/torchrl_mappo"
   device: ???
@@ -42,6 +42,7 @@ eval:
   evaluation_episodes: 1
 
 logger:
-  backend: wandb # Delete to remove logging
+  backend: csv
+  #backend: wandb # Delete to remove logging
   project_name: null
   group_name: null

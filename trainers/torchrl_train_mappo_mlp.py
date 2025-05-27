@@ -29,7 +29,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils.logging import init_logging, log_evaluation, log_training
 from utils.utils import DoneTransform
 
-from scenarios.simple_language_deployment_scenario import MyLanguageScenario
+from scenarios.centralized.multi_agent_llm_exploration import MyLanguageScenario
 from omegaconf import DictConfig
 
 
@@ -64,32 +64,91 @@ def train(cfg: DictConfig):  # noqa: F821
     
     comms_radius = 0.3
     use_gnn = False
-    mini_grid_radius = 1
-    n_target_classes = 1
     kwargs = {
+        # === Map & Scenario Layout ===
+        "x_semidim": 3.0,
+        "y_semidim": 3.0,
+        "covering_range": 0.15,
+        "agent_radius": 0.17,
+        "n_obstacles": 5,
+
+        # === Agent/Target Counts & Behavior ===
+        "n_agents": 3,
+        "agents_per_target": 1,
         "n_targets_per_class": 4,
         "n_target_classes": 1,
-        "x_semidim": 1.0,
-        "y_semidim": 1.0,
-        "mini_grid_radius": 1,
-        "min_collision_distance": 0.05,
-        "comms_radius": comms_radius,
+        "n_targets": 4,  # 4 per class * 1 class
+        "done_at_termination": True,
+
+        # === Rewards ===
+        "shared_target_reward": True,
+        "shared_final_reward": True,
+        "agent_collision_penalty": -0.0,
+        "obstacle_collision_penalty": -0.5,
+        "covering_rew_coeff": 7.0,
+        "false_covering_penalty_coeff": -0.25,
+        "time_penalty": 0.00,
+        "terminal_rew_coeff": 15.0,
+        "exponential_search_rew_coeff": 1.5,
+        "termination_penalty_coeff": -5.0,
+
+        # === Exploration Rewards ===
+        "use_expo_search_rew": True,
+        "grid_visit_threshold": 4,
+        "exploration_rew_coeff": -0.05,
+        "new_cell_rew_coeff": 0.02,
+        "heading_exploration_rew_coeff": 20, #30,
+
+        # === Lidar & Sensing ===
+        "use_lidar": False,
+        "n_lidar_rays_entities": 8,
+        "n_lidar_rays_agents": 12,
+        "use_velocity_controller": True,
+        "max_agent_observation_radius": 0.3,
+        "prediction_horizon_steps": 1,
+
+        # === Agent Communication & GNNs ===
         "use_gnn": use_gnn,
-        "n_obstacles": 0,
-        "global_heading_objective": False,
-        "num_grid_cells": 1024,
-        "embedding_size": cfg.model.embedding_size,
-        "data_json_path": 'data/language_data_complete_multi_target_color_scale.json',
-        "decoder_model_path": 'decoders/llm0_decoder_model_grid_single_target_color.pth',
-        "llm_activate": True,
-        "use_decoder": False,
+        "comm_dim": 0,
+        "comms_radius": comms_radius,
+
+        # === Observation Settings ===
+        "observe_grid": True,
+        "observe_targets": True,
+        "observe_agents": False,
+        "observe_pos_history": False,
+        "observe_vel_history": False,
         "use_grid_data": True,
         "use_class_data": False,
         "use_max_targets_data": False,
-        "observe_pos_history": False,
-        "observe_targets": False,
-        "history_length": 0
-}
+        "use_confidence_data": True,
+
+        # === Grid Settings ===
+        "num_grid_cells": 400,
+        "mini_grid_radius": 1,
+
+        # === Movement & Dynamics ===
+        "agent_weight": 1.0,
+        "agent_v_range": 1.0,
+        "agent_a_range": 1.0,
+        "min_collision_distance": 0.15,
+        "linear_friction": 0.1,
+
+        # === Histories ===
+        "history_length": 0,
+        
+        # === Language & LLM Goals ===
+        "embedding_size": 1024,
+        "llm_activate": True,
+
+        # === External Inputs ===
+        "data_json_path": "data/language_data_complete_multi_target_color_scale_confidence.json",
+        "decoder_model_path": "decoders/llm0_decoder_model_grid_single_target_color.pth",
+        "use_decoder": False,
+
+        # === Visuals ===
+        "viewer_zoom": 1,
+    }
     
     # Create env and env_test
     env = VmasEnv(

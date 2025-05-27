@@ -15,7 +15,7 @@ if typing.TYPE_CHECKING:
 
 from scenarios.grids.world_occupancy_grid import WorldOccupancyGrid, load_task_data, load_decoder
 from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory
-from scenarios.centralized.scripts.observation import observation
+from scenarios.centralized.scripts.observation import observation, observation_torchrl
 from scenarios.centralized.scripts.rewards import compute_reward
 from scenarios.centralized.scripts.load_config import load_scenario_config
 
@@ -302,7 +302,7 @@ class MyLanguageScenario(BaseScenario):
 
     def observation(self, agent: Agent):
         """Collect Observations from the environment"""
-        return observation(agent, self)   
+        return observation_torchrl(agent, self)   
     
     def pre_step(self):
         
@@ -380,11 +380,11 @@ class MyLanguageScenario(BaseScenario):
                         if heading_lvl >= 0.:
                             if self.n_targets > 0:
                                 #color = (self.target_colors[self.target_class[env_index]] * 0.8 * heading_lvl * self.num_grid_cells * 0.1)
-                                color = (self.target_colors[self.target_class[env_index]] * 0.8 * heading_lvl)
+                                color = (self.target_colors[self.target_class[env_index]] * 0.6 * heading_lvl)
                             else:
                                 # redish gradient based on heading
-                                color = (1.0, 1.0 - heading_lvl, 1.0 - heading_lvl)
-                                #color = (1.0, 1.0 - heading_lvl * self.num_grid_cells * 0.1, 1.0 - heading_lvl * self.num_grid_cells * 0.1)  # Redish gradient based on heading
+                                #color = (1.0, 1.0 - heading_lvl, 1.0 - heading_lvl)
+                                color = (1.0, 1.0 - heading_lvl * self.num_grid_cells * 0.1, 1.0 - heading_lvl * self.num_grid_cells * 0.1)  # Redish gradient based on heading
                             rect = rendering.FilledPolygon([(x, y), (x + grid.cell_size_x * self.x_semidim, y), 
                                                             (x + grid.cell_size_x * self.x_semidim, y + grid.cell_size_y * self.y_semidim), (x, y + grid.cell_size_y * self.y_semidim)])
                             rect.set_color(*color)
