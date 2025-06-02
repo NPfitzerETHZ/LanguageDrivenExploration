@@ -8,8 +8,8 @@ class KinematicUnicycle(Dynamics):
     Kinematic unicycle model.
     State = [x, y, θ]ᵀ.
     Inputs:
-        v      – linear velocity command  [m s⁻¹]
-        omega  – yaw-rate command         [rad s⁻¹]
+        v      - linear velocity command  [m s⁻¹]
+        omega  - yaw-rate command         [rad s⁻¹]
     """
 
     def __init__(
@@ -88,19 +88,18 @@ class KinematicUnicycle(Dynamics):
             acc_angular = (delta_state[:, 2] - v_cur_angular * self.dt) / self.dt**2
             torque = self.agent.moment_of_inertia * acc_angular
             self.agent.state.torque = torque.unsqueeze(-1)
-            return
+        else:
+            # Required accelerations
+            acc_x       = (delta_state[:, 0] - v_cur_x * self.dt) / self.dt**2
+            acc_y       = (delta_state[:, 1] - v_cur_y * self.dt) / self.dt**2
+            acc_angular = (delta_state[:, 2] - v_cur_angular * self.dt) / self.dt**2
 
-        # Required accelerations
-        acc_x       = (delta_state[:, 0] - v_cur_x * self.dt) / self.dt**2
-        acc_y       = (delta_state[:, 1] - v_cur_y * self.dt) / self.dt**2
-        acc_angular = (delta_state[:, 2] - v_cur_angular * self.dt) / self.dt**2
+            # Convert to forces and torque
+            force_x = self.agent.mass * acc_x
+            force_y = self.agent.mass * acc_y
+            torque  = self.agent.moment_of_inertia * acc_angular
 
-        # Convert to forces and torque
-        force_x = self.agent.mass * acc_x
-        force_y = self.agent.mass * acc_y
-        torque  = self.agent.moment_of_inertia * acc_angular
-
-        # Push to simulator
-        self.agent.state.force[:, vmas.simulator.utils.X] = force_x
-        self.agent.state.force[:, vmas.simulator.utils.Y] = force_y
-        self.agent.state.torque = torque.unsqueeze(-1)
+            # Push to simulator
+            self.agent.state.force[:, vmas.simulator.utils.X] = force_x
+            self.agent.state.force[:, vmas.simulator.utils.Y] = force_y
+            self.agent.state.torque = torque.unsqueeze(-1)

@@ -33,8 +33,6 @@ from deployment.utils import convert_ne_to_xy, convert_xy_to_ne, get_experiment
 X = 0
 Y = 1
 
-
-
 class State:
     def __init__(self, pos, vel, device):
         self.device = device
@@ -79,11 +77,6 @@ class Agent:
             vel=[0.0, 0.0],
             device=self.device
         )
-        
-        # Task config
-        self.llm_activate = task_config.llm_activate
-        self.mini_grid_radius = task_config.mini_grid_radius
-        self.observe_targets = task_config.observe_targets
         
         # Get topic prefix from config or use default
         topic_prefix = getattr(deployment_config, "topic_prefix", "/robomaster_")
@@ -166,7 +159,7 @@ class VmasModelsROSInterface(Node):
         self.agent_radius = config["task_config"].value.agent_radius
 
         # Load experiment and get policy
-        experiment = get_experiment(config, restore_path)
+        experiment = get_experiment(config, restore_path, debug=True)
         self.policy = experiment.policy
 
         # Setup CSV logging
@@ -382,8 +375,9 @@ def extract_initial_config():
             config_name = arg.split("=", 1)[1]
     return config_path, config_name
 
+# Run script with:
+# python deployment/debug/debug_policy/navigation_deployment.py config_path=path_to/navigation_single_agent config_name=benchmarl_mappo.yaml
 config_path, config_name = extract_initial_config()
-
 @hydra.main(config_path=config_path, config_name=config_name, version_base="1.1")
 def main(cfg: DictConfig) -> None:
     rclpy.init()
