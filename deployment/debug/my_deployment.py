@@ -5,11 +5,10 @@ import shutil
 import signal
 from pathlib import Path
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 import torch
 from torchrl.envs.utils import ExplorationType, set_exploration_type
-from sentence_transformers import SentenceTransformer
 from omegaconf import DictConfig, OmegaConf
 import hydra
 import speech_recognition as sr
@@ -17,6 +16,7 @@ import speech_recognition as sr
 from tensordict import TensorDict
 from benchmarl.utils import DEVICE_TYPING
 from vmas.simulator.utils import TorchUtils
+from sentence_transformers import SentenceTransformer
 
 # ROS2
 import rclpy
@@ -30,7 +30,6 @@ from freyja_msgs.msg import WaypointTarget
 # Local Modules
 sys.path.insert(0, "/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration")
 from scenarios.grids.world_occupancy_grid import WorldOccupancyGrid
-from scenarios.centralized.multi_agent_llm_exploration import MyLanguageScenario
 from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory
 from scenarios.centralized.scripts.observation import observation
 from scenarios.centralized.scripts.load_config import load_scenario_config_yaml
@@ -59,6 +58,9 @@ class Agent:
     deployment_config,
     device: DEVICE_TYPING):
         
+        self.timer: Optional[rclpy.timer.Timer] = None
+        self._scale = torch.tensor([node.x_semidim, node.y_semidim], device=device)
+        
         self.node = node
         self.robot_id = robot_id
         self.weight = weight
@@ -85,7 +87,6 @@ class Agent:
         
         self.pos_history_length = pos_history_length
         self.pos_dim = 2
-        
         self._create_history(self.node.observe_pos_history,self.node.observe_vel_history)
         
         # Shared grid
@@ -136,7 +137,7 @@ class Agent:
                 history_length=self.vel_history_length,
                 pos_dim=self.vel_dim,
                 device=self.device)
-    
+
     def current_state_callback(self, msg: CurrentState):
         # Extract current state values from the state vector
         current_pos_n = msg.state_vector[0]
@@ -156,6 +157,7 @@ class Agent:
         if len(self.state_buffer) > self.state_buffer_length:
             self.state_buffer = self.state_buffer[-self.state_buffer_length:]
         self.grid.update(self.state.pos)
+       
         
     def send_zero_velocity(self):
         # Send a zero velocity command
@@ -195,7 +197,7 @@ class VmasModelsROSInterface(Node):
         self.pos_history_length = config["task_config"].value.history_length
 
         # Load experiment and get policy
-        experiment = get_experiment(config, restore_path)
+        experiment = get_experiment(config, restore_path, debug=False)
         self.policy = experiment.policy
 
         # Setup CSV logging
@@ -223,6 +225,7 @@ class VmasModelsROSInterface(Node):
             )
             agents.append(agent)
         
+        
         # Create action loop
         self.action_dt = deployment_config.action_dt
         self.max_steps = deployment_config.max_steps
@@ -230,7 +233,7 @@ class VmasModelsROSInterface(Node):
         self.world = World(agents,self.action_dt)
         
         self.get_logger().info("ROS2 starting ..")
-        
+    
     def _create_occupancy_grid(self):
         
         self.occupancy_grid = WorldOccupancyGrid(
@@ -268,7 +271,6 @@ class VmasModelsROSInterface(Node):
 
         action = output_td[("agents", "action")]
 
-
         self._issue_commands_to_agents(action)
         self.step_count += 1
 
@@ -282,7 +284,6 @@ class VmasModelsROSInterface(Node):
         self.get_logger().info(f"Robots reached {self.max_steps} steps. Stopping.")
         self.timer.cancel()
         self.stop_all_agents()
-        self.occupancy_grid.reset_all()
         if self.use_speech_to_text:
             self.prompt_for_new_speech_instruction()
         else:
@@ -294,8 +295,7 @@ class VmasModelsROSInterface(Node):
         for agent in self.world.agents:
             if not agent.state_buffer:
                 self.get_logger().warn(f"No state in buffer for agent {agent.robot_id}")
-                continue
-
+                return
             latest_state = agent.state_buffer.pop()
             if self.use_gnn:
                 obs_list.append(latest_state["obs"].float())
@@ -326,9 +326,9 @@ class VmasModelsROSInterface(Node):
         accounting for the agent's radius and timestep.
         """
         pos = agent.state.pos[0]  # shape: (2,)
-        vel = cmd_vel
+        vel = cmd_vel.clone()
         
-        # Scale Action to deplyoment environment
+        # Scale Action to deployment environment
         vel[X] = vel[X] * self.x_semidim / self.task_x_semidim
         vel[Y] = vel[Y] * self.y_semidim / self.task_y_semidim
 
@@ -382,12 +382,34 @@ class VmasModelsROSInterface(Node):
             agent.mytime += self.action_dt
 
     def stop_all_agents(self):
+        if getattr(self, "timer", None): self.timer.cancel()
         for agent in self.world.agents:
-            agent.state_buffer = [] 
-            agent.timer.cancel()
+            if agent.timer is not None:
+                agent.timer.cancel()
+            agent.state_buffer.clear()
             agent.send_zero_velocity()
     
+    def _parse_goal_from_input(self, txt: str) -> torch.Tensor:
+        """
+        Expected formats:
+        •  "3.0 -2.5"
+        •  "3.0, -2.5"
+        Returns a (1, 2) float32 tensor on the correct device.
+        """
+        # replace comma with space, split, take first two items
+        try:
+            n_str, e_str = txt.replace(",", " ").split()[:2]
+            goal = torch.tensor([[float(n_str), float(e_str)]],
+                                dtype=torch.float32,
+                                device=self.device)
+            return goal
+        except Exception:
+            raise ValueError(
+                "Invalid goal format. Please enter two numbers, e.g. '1.2 -0.8'"
+            )
+            
     def prompt_for_new_instruction(self):
+        
         new_sentence = input("Enter a new instruction for the agents: ")
         try:
             embedding = torch.tensor(self.llm.encode([new_sentence]), device=self.device).squeeze(0)
@@ -398,6 +420,7 @@ class VmasModelsROSInterface(Node):
 
         # Reset step count and timers
         self.step_count = 0
+        if agent.timer: agent.timer.cancel(); agent.timer = None
         self.timer = self.create_timer(self.action_dt, self.timer_callback)
         for agent in self.world.agents:
             agent.mytime = 0
@@ -439,15 +462,15 @@ class VmasModelsROSInterface(Node):
 
         self.occupancy_grid.embeddings[0] = embedding
 
-        # Reset step count and timers
+       # Reset step count and timers
         self.step_count = 0
+        if agent.timer: agent.timer.cancel(); agent.timer = None
         self.timer = self.create_timer(self.action_dt, self.timer_callback)
         for agent in self.world.agents:
             agent.mytime = 0
             agent.timer = self.create_timer(agent.obs_dt, agent.collect_observation)
-
         self.get_logger().info("Starting agents with new instruction.")
-
+    
 
 def get_runtime_log_dir():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -455,7 +478,6 @@ def get_runtime_log_dir():
     log_dir = runtime_dir / f"run_{timestamp}"
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir
-
 
 # Manually parse config_path and config_name from CLI
 def extract_initial_config():
@@ -467,8 +489,9 @@ def extract_initial_config():
             config_name = arg.split("=", 1)[1]
     return config_path, config_name
 
+# Run script with:
+# python deployment/debug/debug_policy/navigation_deployment.py config_path=path_to/navigation_single_agent config_name=benchmarl_mappo.yaml
 config_path, config_name = extract_initial_config()
-
 @hydra.main(config_path=config_path, config_name=config_name, version_base="1.1")
 def main(cfg: DictConfig) -> None:
     rclpy.init()
@@ -501,6 +524,8 @@ def main(cfg: DictConfig) -> None:
         ros_interface_node.prompt_for_new_speech_instruction()
     else:
         ros_interface_node.prompt_for_new_instruction()
+    
+    ros_interface_node.prompt_for_new_instruction()
 
     def sigint_handler(sig, frame):
         ros_interface_node.get_logger().info('SIGINT received. Stopping timer and sending zero velocity...')

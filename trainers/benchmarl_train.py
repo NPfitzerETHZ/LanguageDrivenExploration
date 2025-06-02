@@ -77,7 +77,7 @@ task.config = {
     "reward_scale_factor": 0.1,
     "shared_target_reward": True,
     "shared_final_reward": True,
-    "agent_collision_penalty": -0.0,
+    "agent_collision_penalty": -0.5,
     "obstacle_collision_penalty": -0.5,
     "covering_rew_coeff": 7.0,
     "false_covering_penalty_coeff": -0.25,
@@ -90,7 +90,7 @@ task.config = {
     "use_expo_search_rew": True,
     "grid_visit_threshold": 2,
     "exploration_rew_coeff": -0.05,
-    "new_cell_rew_coeff": 0.05,
+    "new_cell_rew_coeff": 0.15,
     "heading_exploration_rew_coeff": 30, #30,
 
     # === Lidar & Sensing ===
