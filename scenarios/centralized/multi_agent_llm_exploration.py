@@ -13,6 +13,7 @@ from vmas.simulator.sensors import Lidar
 if typing.TYPE_CHECKING:
     from vmas.simulator.rendering import Geom
 
+from scenarios.kinematic_dynamic_models.kinematic_unicycle import KinematicUnicycle
 from scenarios.grids.world_occupancy_grid import WorldOccupancyGrid, load_task_data, load_decoder
 from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory
 from scenarios.centralized.scripts.observation import observation, observation_torchrl
@@ -78,7 +79,8 @@ class MyLanguageScenario(BaseScenario):
                 f_range=self.agent_f_range,
                 v_range=self.agent_v_range,
                 sensors=(self._create_agent_sensors(world) if self.use_lidar else []),
-                dynamics=Holonomic(),
+                dynamics= (KinematicUnicycle(world,use_velocity_controler) if self.use_kinematic_model else Holonomic()),
+                render_action=True,
                 color=Color.GREEN
             )
             
@@ -298,11 +300,12 @@ class MyLanguageScenario(BaseScenario):
         
     def reward(self, agent: Agent):
         """Compute the reward for a given agent."""
-        return compute_reward(agent,self)
+        return self.reward_scale_factor * compute_reward(agent,self)
 
     def observation(self, agent: Agent):
         """Collect Observations from the environment"""
-        return observation_torchrl(agent, self)   
+        return observation_torchrl(agent, self) 
+        #return observation(agent, self)  
     
     def pre_step(self):
         
@@ -328,9 +331,12 @@ class MyLanguageScenario(BaseScenario):
 
         # Zero small input
         action_norm = torch.linalg.vector_norm(agent.action.u, dim=1)
-        agent.action.u[action_norm < 0.08] = 0
+        agent.action.u[action_norm < 0.005] = 0
 
-        agent.controller.process_force()
+        if self.use_velocity_controller and not self.use_kinematic_model:
+            agent.controller.process_force()
+        # if self.use_kinematic_model:
+        #     agent.dynamics.process_action()
         
         
     def extra_render(self, env_index: int = 0) -> "List[Geom]":

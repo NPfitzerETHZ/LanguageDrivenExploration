@@ -52,7 +52,7 @@ def save_checkpoint(model, optimizer, iteration, total_frames, path="torch_rl_ch
 @hydra.main(version_base="1.1", config_path="/Users/nicolaspfitzer/ProrokLab/CustomScenarios/configs", config_name="torchrl_mappo")
 def train(cfg: DictConfig):  # noqa: F821
     # Device
-    cfg.train.device = "cpu" if not torch.cuda.device_count() else "cuda:0"
+    cfg.train.device = "mps" if not torch.cuda.device_count() else "cuda:0"
     cfg.env.device = cfg.train.device
 
     # Seeding
@@ -71,7 +71,7 @@ def train(cfg: DictConfig):  # noqa: F821
         "y_semidim": 1.0,
         "covering_range": 0.15,
         "agent_radius": 0.03,
-        "n_obstacles": 5,
+        "n_obstacles": 0,
 
         # === Agent/Target Counts & Behavior ===
         "n_agents": 3,
@@ -84,11 +84,11 @@ def train(cfg: DictConfig):  # noqa: F821
         # === Rewards ===
         "shared_target_reward": False,
         "shared_final_reward": True,
-        "agent_collision_penalty": -0.5,
+        "agent_collision_penalty": -0.0,
         "obstacle_collision_penalty": -0.5,
-        "covering_rew_coeff": 5.0,
+        "covering_rew_coeff": 8.0,
         "false_covering_penalty_coeff": -0.25,
-        "time_penalty": -0.05,
+        "time_penalty": -0.02,
         "terminal_rew_coeff": 0.0,
         "exponential_search_rew_coeff": 1.5,
         "termination_penalty_coeff": -5.0,
@@ -96,7 +96,7 @@ def train(cfg: DictConfig):  # noqa: F821
         # === Exploration Rewards ===
         "use_expo_search_rew": True,
         "grid_visit_threshold": 2,
-        "exploration_rew_coeff": -0.00,
+        "exploration_rew_coeff": -0.05,
         "new_cell_rew_coeff": 0.05,
         "heading_exploration_rew_coeff": 30, #30,
 
@@ -211,7 +211,7 @@ def train(cfg: DictConfig):  # noqa: F821
             topology="from_pos", # from_pos: Tell the GNN to build topology from positions and edge_radius, full: Fully connected topology
             edge_radius=comms_radius, # The edge radius for the topology
             n_gnn_layers = 1,
-            self_loops=True,
+            self_loops=False,
             gnn_class=GraphConv,
             position_key="pos",
             pos_features=2,
@@ -222,13 +222,13 @@ def train(cfg: DictConfig):  # noqa: F821
             device=cfg.train.device,
             ),
             NormalParamExtractor()
-    )
+    ).to(cfg.train.device)
     
     policy_module = TensorDictModule(
         actor_net,
         in_keys=[("agents", "observation")],
         out_keys=[("agents", "loc"), ("agents", "scale")],
-    )
+    ).to(cfg.train.device)
     
     policy = ProbabilisticActor(
         module=policy_module,
@@ -251,7 +251,7 @@ def train(cfg: DictConfig):  # noqa: F821
         sentence_dim=cfg.model.embedding_size,
         hidden_dim=256,
         device=cfg.train.device,
-    )
+    ).to(cfg.train.device)
     
     value_module = ValueOperator(
         module=module,
@@ -262,7 +262,6 @@ def train(cfg: DictConfig):  # noqa: F821
         env,
         policy,
         device=cfg.env.device,
-        storing_device=cfg.train.device,
         frames_per_batch=cfg.collector.frames_per_batch,
         total_frames=cfg.collector.total_frames,
         postproc=DoneTransform(reward_key=env.reward_key, done_keys=env.done_keys),

@@ -184,7 +184,7 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
             max_target_count[env_index] = task_dict["max_targets"].unsqueeze(1).int() 
             self.max_target_embedding_found = True
         else:
-            max_target_count[env_index] = self.num_targets_per_class + 1 # never stop looking
+            max_target_count[env_index] = self.num_targets_per_class  #+ 1 # never stop looking
         
         if "confidence" in task_dict:
             confidence_level[env_index] = task_dict["confidence"].unsqueeze(1).int() 
@@ -425,7 +425,7 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
         return obstacle_centers.squeeze(-2), agent_centers.squeeze(-2), target_poses
     
     
-    def gaussian_heading(self, env_index, t_index, pos, sigma_coef=0.17):
+    def gaussian_heading(self, env_index, t_index, pos, sigma_coef=0.05):
         """
         pos: (batch_size, 2)
         env_index: (batch_size,)

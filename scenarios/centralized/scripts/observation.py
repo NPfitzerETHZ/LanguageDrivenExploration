@@ -43,7 +43,7 @@ def observation(agent, env):
     pos = agent.state.pos
     vel = agent.state.vel
     pos_norm = pos / torch.tensor([env.x_semidim, env.y_semidim], device=env.device)
-    vel_norm = vel / torch.tensor([2 * env.x_semidim, 2 * env.y_semidim], device=env.device)
+    vel_norm = vel / torch.tensor([env.x_semidim, env.y_semidim], device=env.device)
 
     # === Histories ===
     if env.observe_pos_history:
@@ -178,7 +178,7 @@ def observation_torchrl(agent, env):
     pos = agent.state.pos
     vel = agent.state.vel
     pos_norm = pos / torch.tensor([env.x_semidim, env.y_semidim], device=env.device)
-    vel_norm = vel / torch.tensor([2 * env.x_semidim, 2 * env.y_semidim], device=env.device)
+    vel_norm = vel / torch.tensor([env.x_semidim, env.y_semidim], device=env.device)
     # === LLM sentence embedding ===
     if env.llm_activate:
         obs_dict["sentence_embedding"] = env.occupancy_grid.observe_embeddings()
@@ -202,24 +202,25 @@ def observation_torchrl(agent, env):
         lidar_measures = torch.cat([sensor.measure() for sensor in agent.sensors], dim=-1)
         obs_components.append(lidar_measures)
 
-    # === Target Observation ===
-    if env.observe_targets:
-        obs_components.append(env.occupancy_grid.get_grid_target_observation(pos, env.mini_grid_radius))
-
-    # === Occupancy Grid ===
-    obs_components.append(env.occupancy_grid.get_grid_visits_obstacle_observation(pos, env.mini_grid_radius))
-
     # === Exponential Search Reward / Max targets ===
     if env.use_expo_search_rew or env.use_max_targets_data:
-        obs_components.append(agent.num_covered_targets.unsqueeze(1))
+        obs_components.append(agent.num_covered_targets.unsqueeze(1) / env.max_target_count.unsqueeze(1))
     
-    # === Agent ID ===
-    one_hot = torch.nn.functional.one_hot(
-        torch.tensor([agent_id], device=env.device),
-        num_classes=env.n_agents
-    ).float()
-    id_tensor = one_hot.expand(env.world.batch_dim, -1)
-    obs_components.append(id_tensor)
+    # # === Agent ID ===
+    # one_hot = torch.nn.functional.one_hot(
+    #     torch.tensor([agent_id], device=env.device),
+    #     num_classes=env.n_agents
+    # ).float()
+    # id_tensor = one_hot.expand(env.world.batch_dim, -1)
+    # obs_components.append(id_tensor)
+    
+    # === Target Observation ===
+    if env.observe_targets:
+        obs_dict["target_obs"] = env.occupancy_grid.get_grid_target_observation(pos, env.mini_grid_radius)
+    
+    # === Occupancy Grid ===
+    #obs_dict["grid_obs"] = env.occupancy_grid.get_grid_visits_obstacle_observation_2d(pos, env.mini_grid_radius * 2)
+    obs_dict["grid_obs"] = env.occupancy_grid.get_grid_visits_obstacle_observation_2d(pos, env.mini_grid_radius)
 
     # === Pose ===
     if env.use_gnn:

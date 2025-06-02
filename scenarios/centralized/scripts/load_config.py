@@ -19,6 +19,7 @@ def load_scenario_config(kwargs, env):
     env.done_at_termination = kwargs.pop("done_at_termination", True)
 
     # === Rewards ===
+    env.reward_scale_factor = kwargs.pop("reward_scale_factor", 0.1)
     env.shared_target_reward = kwargs.pop("shared_target_reward", True)
     env.shared_final_reward = kwargs.pop("shared_final_reward", True)
     env.agent_collision_penalty = kwargs.pop("agent_collision_penalty", -0.5)
@@ -44,7 +45,6 @@ def load_scenario_config(kwargs, env):
     env.use_obstacle_lidar = kwargs.pop("use_obstacle_lidar", False)
     env.n_lidar_rays_entities = kwargs.pop("n_lidar_rays_entities", 8)
     env.n_lidar_rays_agents = kwargs.pop("n_lidar_rays_agents", 12)
-    env.use_velocity_controller = kwargs.pop("use_velocity_controller", True)
     env.max_agent_observation_radius = kwargs.pop("max_agent_observation_radius", 0.4)
     env.prediction_horizon_steps = kwargs.pop("prediction_horizon_steps", 1)
 
@@ -70,6 +70,8 @@ def load_scenario_config(kwargs, env):
     env.plot_grid = True
 
     # === Movement & Dynamics ===
+    env.use_velocity_controller = kwargs.pop("use_velocity_controller", True)
+    env.use_kinematic_model = kwargs.pop("use_kinematic_model", True)
     env.agent_weight = kwargs.pop("agent_weight", 1.0)
     env.agent_v_range = kwargs.pop("agent_v_range", 1.0)
     env.agent_a_range = kwargs.pop("agent_a_range", 1.0)
@@ -120,6 +122,7 @@ def load_scenario_config_yaml(config, env):
     env.done_at_termination = cfg.done_at_termination
 
     # === Rewards ===
+    env.reward_scale_factor = cfg.reward_scale_factor
     env.shared_target_reward = cfg.shared_target_reward
     env.shared_final_reward = cfg.shared_final_reward
     env.agent_collision_penalty = cfg.agent_collision_penalty
@@ -142,7 +145,6 @@ def load_scenario_config_yaml(config, env):
     env.use_lidar = cfg.use_lidar
     env.n_lidar_rays_entities = cfg.n_lidar_rays_entities
     env.n_lidar_rays_agents = cfg.n_lidar_rays_agents
-    env.use_velocity_controller = cfg.use_velocity_controller
     env.max_agent_observation_radius = cfg.max_agent_observation_radius
     env.prediction_horizon_steps = cfg.prediction_horizon_steps
 
@@ -168,6 +170,8 @@ def load_scenario_config_yaml(config, env):
     env.plot_grid = True
 
     # === Movement & Dynamics ===
+    env.use_velocity_controller = cfg.use_velocity_controller
+    env.use_kinematic_model = cfg.use_kinematic_model
     env.agent_weight = cfg.agent_weight
     env.agent_v_range = cfg.agent_v_range
     env.agent_a_range = cfg.agent_a_range

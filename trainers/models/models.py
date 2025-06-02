@@ -424,7 +424,7 @@ class MultiAgentGNN(nn.Module):
         velocity_key: Optional[str] = None,
         vel_features: Optional[int] = None,
         edge_radius: Optional[float] = None,
-        emb_dim: int = 128,
+        emb_dim: int = 32,
         sentence_key: str = "sentence_embedding",
         device: str | torch.device = "cpu",
     ):
@@ -442,16 +442,16 @@ class MultiAgentGNN(nn.Module):
         self.velocity_key = velocity_key
         self.exclude_pos_from_node_features = exclude_pos_from_node_features
         self.edge_radius = edge_radius
-        self.device = torch.device(device)
+        #self.device = torch.device(device)
         self.sentence_key = sentence_key
         self.emb_dim = emb_dim
         
-        self.edge_index = _get_edge_index(
-            topology=self.topology,
-            self_loops=self.self_loops,
-            device=self.device,
-            n_agents=self.n_agents,
-        )
+        # self.edge_index = _get_edge_index(
+        #     topology=self.topology,
+        #     self_loops=self.self_loops,
+        #     device=self.device,
+        #     n_agents=self.n_agents,
+        # )
         self._full_position_key = None
         self._full_velocity_key = None
 
@@ -498,31 +498,34 @@ class MultiAgentGNN(nn.Module):
         #     nn.Linear(emb_dim, emb_dim),
         # )
 
-        self.convs = nn.ModuleList([
-            gnn_class(in_channels=node_input_dim, out_channels=emb_dim, **gnn_kwargs)
+        self.graph_convs = nn.ModuleList([
+            gnn_class(in_channels=4, out_channels=emb_dim, **gnn_kwargs)
             for _ in range(n_gnn_layers)
         ])
+        
+        self.space_conv =  nn.Conv2d(in_channels=1, out_channels=emb_dim, kernel_size=3, padding=1)
 
         #self.film_gen = FiLMGen(sent_dim=sentence_dim, hidden=emb_dim, feat_dim=emb_dim)
 
         self.policy_head = nn.Sequential(
-            nn.Linear(emb_dim + sentence_dim, emb_dim), nn.ReLU(),
-            nn.Linear(emb_dim, emb_dim), nn.ReLU(),
-            nn.Linear(emb_dim, 2 * action_dim)
+            nn.Linear(sentence_dim + node_input_dim + emb_dim, 512), nn.ReLU(),
+            nn.Linear(512, 256), nn.ReLU(),
+            nn.Linear(256, 256), nn.ReLU(),
+            nn.Linear(256, 2 * action_dim)
         )
 
         # --------------- edge index template ---------------------------
-        if topology == "full":
-            src, dst = zip(*[(i, j) for i in range(n_agents) for j in range(n_agents) if i != j])
-            edge_fc = torch.tensor([src, dst], dtype=torch.long)
-            if self_loops:
-                edge_fc = add_self_loops(edge_fc, num_nodes=n_agents)[0]
-            self.register_buffer("_edge_template", edge_fc)
-        elif topology == "empty" and self_loops:
-            loops = torch.arange(n_agents, dtype=torch.long).repeat(2, 1)
-            self.register_buffer("_edge_template", loops)
-        else:
-            self.register_buffer("_edge_template", torch.empty(2, 0, dtype=torch.long))
+        # if topology == "full":
+        #     src, dst = zip(*[(i, j) for i in range(n_agents) for j in range(n_agents) if i != j])
+        #     edge_fc = torch.tensor([src, dst], dtype=torch.long)
+        #     if self_loops:
+        #         edge_fc = add_self_loops(edge_fc, num_nodes=n_agents)[0]
+        #     self.register_buffer("_edge_template", edge_fc)
+        # elif topology == "empty" and self_loops:
+        #     loops = torch.arange(n_agents, dtype=torch.long).repeat(2, 1)
+        #     self.register_buffer("_edge_template", loops)
+        # else:
+        #     self.register_buffer("_edge_template", torch.empty(2, 0, dtype=torch.long))
 
     # ------------------------------------------------------------------
     # forward
@@ -544,6 +547,11 @@ class MultiAgentGNN(nn.Module):
         if vel is not None:
             node_feat.append(vel)
         x = torch.cat(node_feat, dim=-1)  # (B, N, F)
+        
+        grid = td["grid_obs"]
+        G = grid.shape[-1]
+        grid = grid.view(B*N,1,G, G)
+        visits = self.space_conv(grid).mean(dim=(2, 3)).view(B, N, -1)  # (B, N, emb_dim)
         #x = self.pre_embed(x)  # (B, N, emb_dim)
         
         # -------- FiLM parameters --------------------------------------
@@ -556,29 +564,29 @@ class MultiAgentGNN(nn.Module):
         # sentence = self.sentence_encoder(sentence)
         # x = torch.cat([x, sentence], dim=-1) 
 
-        graph = _batch_from_dense_to_ptg(
-            x=x,
-            edge_index=self.edge_index,
-            pos=pos,
-            vel=vel,
-            self_loops=self.self_loops,
-            edge_radius=self.edge_radius,
-        )
-        forward_gnn_params = {
-            "x": graph.x,
-            "edge_index": graph.edge_index,
-        }
-        if (
-            self.position_key is not None or self.velocity_key is not None
-        ) and self.gnn_supports_edge_attrs:
-            forward_gnn_params.update({"edge_attr": graph.edge_attr})
+        # graph = _batch_from_dense_to_ptg(
+        #     x=x,
+        #     edge_index=self.edge_index,
+        #     pos=pos,
+        #     vel=vel,
+        #     self_loops=self.self_loops,
+        #     edge_radius=self.edge_radius,
+        # )
+        # forward_gnn_params = {
+        #     "x": graph.x,
+        #     "edge_index": graph.edge_index,
+        # }
+        # if (
+        #     self.position_key is not None or self.velocity_key is not None
+        # ) and self.gnn_supports_edge_attrs:
+        #     forward_gnn_params.update({"edge_attr": graph.edge_attr})
             
-        for conv in self.convs:
-            #x = film(x, gamma, beta)
-            x = conv(**forward_gnn_params).view(B, N, self.emb_dim)
+        # for conv in self.convs:
+        #     #x = film(x, gamma, beta)
+        #     x = conv(**forward_gnn_params).view(B, N, self.emb_dim)
         
         sentence = td[self.sentence_key]
-        x = torch.cat([x, sentence], dim=-1) 
+        x = torch.cat([x, visits, sentence], dim=-1) 
 
         logits = self.policy_head(x).view(B, N, -1)  # (B, N, 2*action_dim)
         return logits
@@ -672,78 +680,6 @@ def _batch_from_dense_to_ptg(
 
     return graphs
 
-class AttnPool(nn.Module):
-    """Soft attention over agents to obtain a team embedding.
-
-    Learns scalar scores `w_i = f(h_i)`, normalised with softmax, and
-    returns the weighted sum ∑ α_i h_i.
-    """
-
-    def __init__(self, feat_dim: int, hidden: Optional[int] = None):
-        super().__init__()
-        hidden = hidden or feat_dim
-        self.scorer = nn.Sequential(
-            nn.Linear(feat_dim, hidden), nn.Tanh(),
-            nn.Linear(hidden, 1)
-        )
-
-    def forward(self, h: torch.Tensor) -> torch.Tensor:  # h: (B, N, F)
-        w = self.scorer(h).squeeze(-1)         # (B, N)
-        alpha = torch.softmax(w, dim=1)        # (B, N)
-        return (alpha.unsqueeze(-1) * h).sum(dim=1)  # (B, F)
-
-class CentralCritic(nn.Module):
-    """Centralised value network with attention pooling.
-
-    * Per‑agent MLP embeds observations → (B, N, H).
-    * `AttnPool` computes a weighted sum so the critic can focus on the
-      most critical agents (e.g. one hitting an obstacle).
-    * Concatenates the instruction latent.
-    * Outputs a scalar value V(s) per environment.
-    """
-
-    def __init__(
-        self,
-        *,
-        n_agents: int,
-        node_input_dim: int,
-        sentence_dim: int,
-        hidden_dim: int = 128,
-    ):
-        super().__init__()
-        self.n_agents = n_agents
-
-        self.node_embed = nn.Sequential(
-            nn.Linear(node_input_dim, hidden_dim), nn.ReLU(),
-        )
-
-        self.attn_pool = AttnPool(hidden_dim)  # learnable pooling
-
-        self.sent_adapter = nn.Sequential(
-            nn.LayerNorm(sentence_dim),
-            nn.Linear(sentence_dim, hidden_dim), nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-        )
-
-        self.value_head = nn.Sequential(
-            nn.LayerNorm(2 * hidden_dim), nn.ReLU(),
-            nn.Linear(2 * hidden_dim, hidden_dim), nn.ReLU(),
-            nn.Linear(hidden_dim, 1),
-        )
-
-    def forward(self, td) -> torch.Tensor:  # (B)
-        obs = td["agents", "obs"]              # (B, N, D_obs)
-        B, N, _ = obs.shape
-        assert N == self.n_agents, "Agent count mismatch"
-
-        h = self.node_embed(obs)                 # (B, N, H)
-        team_repr = self.attn_pool(h)            # (B, H)
-
-        sent_lat = self.sent_adapter(td["sentence_embedding"])  # (B, H)
-
-        x = torch.cat([team_repr, sent_lat], dim=-1)            # (B, 2H)
-        value = self.value_head(x).squeeze(-1)                  # (B)
-        return value
 
 class SimpleConcatCritic(nn.Module):
     """Value function that just concatenates all agent observations and the sentence.
@@ -765,20 +701,31 @@ class SimpleConcatCritic(nn.Module):
     ):
         super().__init__()
         self.n_agents = n_agents
-        flat_dim = n_agents * node_input_dim + sentence_dim
+        flat_dim = n_agents * (node_input_dim + 32) + sentence_dim
 
         self.net = nn.Sequential(
-            nn.LayerNorm(flat_dim),
-            nn.Linear(flat_dim, hidden_dim), nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
+            nn.Linear(flat_dim, hidden_dim * 2), nn.ReLU(),
+            nn.Linear(hidden_dim * 2, hidden_dim * 2), nn.ReLU(),
+            nn.Linear(hidden_dim * 2, hidden_dim), nn.ReLU(),
             nn.Linear(hidden_dim, 1),
         )
+        
+        self.space_conv =  nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, padding=1).to(device)
 
     def forward(self, td: "torchrl.data.TensorDictBase") -> torch.Tensor:  # (B)
         obs = td["obs"]                     # (B,T, N, D)
         flat_obs = obs.view(*obs.shape[:-2], -1)                     # (B, T, N*D)
+        
+        grid = td["grid_obs"]
+        G = grid.shape[-1]
+        batch_grid = grid.view(-1, 1, G, G)
+        conv_out = self.space_conv(batch_grid)
+        visits = conv_out.mean(dim=(-2, -1))
+        visits = visits.view(*grid.shape[:-3], grid.shape[-3], -1)
+        flat_visits = visits.view(*visits.shape[:-2], -1)
+        
         sent = td["sentence_embedding"][...,0,:]                # (B, T, S)
-        x = torch.cat([flat_obs, sent], dim=-1)        # (B, T, N*D + S)
+        x = torch.cat([flat_obs,flat_visits,sent], dim=-1)        # (B, T, N*D + S)
         output = self.net(x)              # (B, T, 1)
         
         # Centralized
