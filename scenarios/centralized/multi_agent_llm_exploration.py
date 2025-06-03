@@ -13,9 +13,10 @@ from vmas.simulator.sensors import Lidar
 if typing.TYPE_CHECKING:
     from vmas.simulator.rendering import Geom
 
+from scenarios.kinematic_dynamic_models.kinematic_unicycle import KinematicUnicycle
 from scenarios.grids.world_occupancy_grid import WorldOccupancyGrid, load_task_data, load_decoder
 from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory
-from scenarios.centralized.scripts.observation import observation
+from scenarios.centralized.scripts.observation import observation, observation_torchrl
 from scenarios.centralized.scripts.rewards import compute_reward
 from scenarios.centralized.scripts.load_config import load_scenario_config
 
@@ -78,7 +79,8 @@ class MyLanguageScenario(BaseScenario):
                 f_range=self.agent_f_range,
                 v_range=self.agent_v_range,
                 sensors=(self._create_agent_sensors(world) if self.use_lidar else []),
-                dynamics=Holonomic(),
+                dynamics= (KinematicUnicycle(world,use_velocity_controler) if self.use_kinematic_model else Holonomic()),
+                render_action=True,
                 color=Color.GREEN
             )
             
@@ -298,11 +300,12 @@ class MyLanguageScenario(BaseScenario):
         
     def reward(self, agent: Agent):
         """Compute the reward for a given agent."""
-        return compute_reward(agent,self)
+        return self.reward_scale_factor * compute_reward(agent,self)
 
     def observation(self, agent: Agent):
         """Collect Observations from the environment"""
-        return observation(agent, self)   
+        return observation_torchrl(agent, self) 
+        #return observation(agent, self)  
     
     def pre_step(self):
         
@@ -328,9 +331,12 @@ class MyLanguageScenario(BaseScenario):
 
         # Zero small input
         action_norm = torch.linalg.vector_norm(agent.action.u, dim=1)
-        agent.action.u[action_norm < 0.08] = 0
+        agent.action.u[action_norm < 0.005] = 0
 
-        agent.controller.process_force()
+        if self.use_velocity_controller and not self.use_kinematic_model:
+            agent.controller.process_force()
+        # if self.use_kinematic_model:
+        #     agent.dynamics.process_action()
         
         
     def extra_render(self, env_index: int = 0) -> "List[Geom]":
@@ -380,11 +386,11 @@ class MyLanguageScenario(BaseScenario):
                         if heading_lvl >= 0.:
                             if self.n_targets > 0:
                                 #color = (self.target_colors[self.target_class[env_index]] * 0.8 * heading_lvl * self.num_grid_cells * 0.1)
-                                color = (self.target_colors[self.target_class[env_index]] * 0.8 * heading_lvl)
+                                color = (self.target_colors[self.target_class[env_index]] * 0.6 * heading_lvl)
                             else:
                                 # redish gradient based on heading
-                                color = (1.0, 1.0 - heading_lvl, 1.0 - heading_lvl)
-                                #color = (1.0, 1.0 - heading_lvl * self.num_grid_cells * 0.1, 1.0 - heading_lvl * self.num_grid_cells * 0.1)  # Redish gradient based on heading
+                                #color = (1.0, 1.0 - heading_lvl, 1.0 - heading_lvl)
+                                color = (1.0, 1.0 - heading_lvl * self.num_grid_cells * 0.1, 1.0 - heading_lvl * self.num_grid_cells * 0.1)  # Redish gradient based on heading
                             rect = rendering.FilledPolygon([(x, y), (x + grid.cell_size_x * self.x_semidim, y), 
                                                             (x + grid.cell_size_x * self.x_semidim, y + grid.cell_size_y * self.y_semidim), (x, y + grid.cell_size_y * self.y_semidim)])
                             rect.set_color(*color)

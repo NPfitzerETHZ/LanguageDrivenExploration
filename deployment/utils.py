@@ -18,6 +18,7 @@ from benchmarl.utils import DEVICE_TYPING
 # Local Modules
 sys.path.insert(0, "/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration")
 from scenarios.centralized.multi_agent_llm_exploration import MyLanguageScenario
+from debug.debug_policy.navigation import NavScenario
 
 
 def convert_ne_to_xy(north: float, east: float) -> tuple[float, float]:
@@ -35,7 +36,7 @@ def convert_xy_to_ne(x: float, y: float) -> tuple[float, float]:
     """
     return y, x
 
-def get_env_fun(
+def get_env_fun_llm(
         self,
         num_envs: int,
         continuous_actions: bool,
@@ -46,6 +47,30 @@ def get_env_fun(
         # Override scenario for NAVIGATION task to use custom language-based scenario
         if self is VmasTask.NAVIGATION:
             scenario = MyLanguageScenario()
+        else:
+            scenario = self.name.lower()
+        return lambda: VmasEnv(
+            scenario=scenario,
+            num_envs=num_envs,
+            continuous_actions=continuous_actions,
+            seed=seed,
+            device=device,
+            categorical_actions=True,
+            clamp_actions=True,
+            **config,
+        )
+
+def get_env_fun_nav(
+        self,
+        num_envs: int,
+        continuous_actions: bool,
+        seed: Optional[int],
+        device: DEVICE_TYPING,
+    ) -> Callable[[], EnvBase]:
+        config = copy.deepcopy(self.config)
+        # Override scenario for NAVIGATION task to use custom language-based scenario
+        if self is VmasTask.NAVIGATION:
+            scenario = NavScenario()
         else:
             scenario = self.name.lower()
         return lambda: VmasEnv(
@@ -77,9 +102,13 @@ def _load_class(class_path: str):
     except (ImportError, AttributeError) as e:
         raise ImportError(f"Cannot load class '{class_path}': {e}")
 
-def get_experiment(config: DictConfig, restore_path: str) -> Experiment:
+def get_experiment(config: DictConfig, restore_path: str, debug: bool = False) -> Experiment:
     
-    VmasTask.get_env_fun = get_env_fun
+    if debug:
+        VmasTask.get_env_fun = get_env_fun_nav
+    else:
+        VmasTask.get_env_fun = get_env_fun_llm
+
     Experiment._load_experiment = _load_experiment_cpu
 
     experiment_config = ExperimentConfig(**config["experiment_config"].value)

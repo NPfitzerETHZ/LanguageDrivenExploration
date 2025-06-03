@@ -126,14 +126,26 @@ class CoreOccupancyGrid:
         mask = torch.where(mini_grid == 0)
         mini_grid[mask] = mini_grid_visited[mask]
 
-        return mini_grid.flatten(start_dim=1, end_dim=-1)
+        return mini_grid.flatten(start_dim=1, end_dim=-1) / OBSTACLE
+    
+    def get_grid_visits_obstacle_observation_2d(self, pos, mini_grid_radius):
+
+        x_range , y_range = self.sample_mini_grid(pos, mini_grid_radius)
+
+        mini_grid = self.grid_obstacles[torch.arange(pos.shape[0]).unsqueeze(1).unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)]
+        mini_grid_visited = self.grid_visits_sigmoid[torch.arange(pos.shape[0]).unsqueeze(1).unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)]
+
+        mask = torch.where(mini_grid == 0)
+        mini_grid[mask] = mini_grid_visited[mask]
+
+        return mini_grid / OBSTACLE
     
     def get_grid_target_observation(self, pos, mini_grid_radius):
 
         x_range , y_range = self.sample_mini_grid(pos, mini_grid_radius)
         mini_grid = self.grid_targets[torch.arange(pos.shape[0]).unsqueeze(1).unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)]
 
-        return mini_grid.flatten(start_dim=1, end_dim=-1)
+        return mini_grid.flatten(start_dim=1, end_dim=-1) / TARGET
 
     def compute_exploration_bonus(self, agent_positions, exploration_rew_coeff = -0.02, new_cell_rew_coeff = 0.25):
         """

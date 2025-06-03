@@ -5,11 +5,10 @@ import shutil
 import signal
 from pathlib import Path
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 import torch
 from torchrl.envs.utils import ExplorationType, set_exploration_type
-from sentence_transformers import SentenceTransformer
 from omegaconf import DictConfig, OmegaConf
 import hydra
 import speech_recognition as sr
@@ -29,22 +28,17 @@ from freyja_msgs.msg import WaypointTarget
 
 # Local Modules
 sys.path.insert(0, "/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration")
-from scenarios.grids.world_occupancy_grid import WorldOccupancyGrid
-from scenarios.centralized.multi_agent_llm_exploration import MyLanguageScenario
-from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory
-from scenarios.centralized.scripts.observation import observation
-from scenarios.centralized.scripts.load_config import load_scenario_config_yaml
 from deployment.utils import convert_ne_to_xy, convert_xy_to_ne, get_experiment
 
 X = 0
 Y = 1
-MAP_NORMAL_SIZE = 2
 
 class State:
-    def __init__(self, pos, vel, device):
+    def __init__(self, pos, vel, rot, device):
         self.device = device
         self.pos = torch.tensor(pos, dtype=torch.float32, device=self.device).unsqueeze(0)
         self.vel = torch.tensor(vel, dtype=torch.float32, device=self.device).unsqueeze(0)
+        self.rot = torch.tensor(vel, dtype=torch.float32, device=self.device).unsqueeze(0)
 
 class Agent:
     def __init__(
@@ -52,12 +46,14 @@ class Agent:
     node,
     robot_id: int,
     weight: float,
-    pos_history_length: int,
-    grid: WorldOccupancyGrid,
-    num_covered_targets: torch.Tensor,
     task_config,
     deployment_config,
     device: DEVICE_TYPING):
+        
+        self.timer: Optional[rclpy.timer.Timer] = None
+        
+        self.goal = None
+        self._scale = torch.tensor([node.x_semidim, node.y_semidim], device=device)
         
         self.node = node
         self.robot_id = robot_id
@@ -80,23 +76,9 @@ class Agent:
         self.state = State(
             pos=[0.0, 0.0],
             vel=[0.0, 0.0],
+            rot=[0.0],
             device=self.device
         )
-        
-        self.pos_history_length = pos_history_length
-        self.pos_dim = 2
-        
-        self._create_history(self.node.observe_pos_history,self.node.observe_vel_history)
-        
-        # Shared grid
-        self.grid = grid
-        # Shared target count
-        self.num_covered_targets = num_covered_targets
-        
-        # Task config
-        self.llm_activate = task_config.llm_activate
-        self.mini_grid_radius = task_config.mini_grid_radius
-        self.observe_targets = task_config.observe_targets
         
         # Get topic prefix from config or use default
         topic_prefix = getattr(deployment_config, "topic_prefix", "/robomaster_")
@@ -121,22 +103,7 @@ class Agent:
     
         # Create reference state message
         self.reference_state = ReferenceState()
-    
-    def _create_history(self, observe_pos_history, observe_vel_history): 
-         
-        if observe_pos_history:
-            self.pos_history = PositionHistory(
-                batch_size=1,
-                history_length=self.pos_history_length,
-                pos_dim=self.pos_dim,
-                device=self.device)
-        if observe_vel_history:
-            self.vel_history = VelocityHistory(
-                batch_size=1,
-                history_length=self.vel_history_length,
-                pos_dim=self.vel_dim,
-                device=self.device)
-    
+
     def current_state_callback(self, msg: CurrentState):
         # Extract current state values from the state vector
         current_pos_n = msg.state_vector[0]
@@ -146,16 +113,25 @@ class Agent:
         
         self.state.pos[0,X], self.state.pos[0,Y] = convert_ne_to_xy(current_pos_n, current_pos_e)
         self.state.vel[0,X], self.state.vel[0,Y] = convert_ne_to_xy(current_vel_n, current_vel_e)
+        self.state.rot[0] = msg.state_vector[5]
         
         self.state_received = True
     
     def collect_observation(self):
         
-        obs = observation(self, self.node)
-        self.state_buffer.append(obs)
-        if len(self.state_buffer) > self.state_buffer_length:
-            self.state_buffer = self.state_buffer[-self.state_buffer_length:]
-        self.grid.update(self.state.pos)
+        if self.goal is not None and self.state_received:
+            
+            obs = {
+                "pos": 1 / self.node.agent_radius * self.state.pos / self._scale,
+                "rot": 1 / self.node.agent_radius * self.state.rot,
+                "vel": 1 / self.node.agent_radius * self.state.vel / self._scale,
+                "obs": (self.state.pos - self.goal) / self._scale,
+            }
+            
+            self.state_buffer.append(obs)
+            if len(self.state_buffer) > self.state_buffer_length:
+                self.state_buffer = self.state_buffer[-self.state_buffer_length:]
+       
         
     def send_zero_velocity(self):
         # Send a zero velocity command
@@ -173,29 +149,21 @@ class World:
 
 class VmasModelsROSInterface(Node):
 
-    def __init__(self, config: DictConfig, log_dir: Path, restore_path: str, use_speech_to_text: bool):
+    def __init__(self, config: DictConfig, log_dir: Path, restore_path: str):
         super().__init__("vmas_ros_interface")
         self.device = config.device 
         deployment_config = config["deployment"]
-        self.llm = SentenceTransformer(deployment_config.llm_model, device="cpu")
-        self.use_speech_to_text = use_speech_to_text
-
-        # Grid Config
-        grid_config = config["grid_config"]
-        self.x_semidim = grid_config.x_semidim
-        self.y_semidim = grid_config.y_semidim
+        self.x_semidim = deployment_config.x_semidim
+        self.y_semidim = deployment_config.y_semidim
+        self.n_agents = deployment_config.n_agents
         
-        # Task Config
-        load_scenario_config_yaml(config,self)
-        self._create_occupancy_grid()
-        self.num_covered_targets = torch.zeros(1, dtype=torch.int, device=self.device)
-
-        # History Config
-        self.pos_dim = 2
-        self.pos_history_length = config["task_config"].value.history_length
+        self.goal = None
+        self.task_x_semidim = config["task_config"].value.x_semidim
+        self.task_y_semidim = config["task_config"].value.y_semidim
+        self.agent_radius = config["task_config"].value.agent_radius
 
         # Load experiment and get policy
-        experiment = get_experiment(config, restore_path)
+        experiment = get_experiment(config, restore_path, debug=True)
         self.policy = experiment.policy
 
         # Setup CSV logging
@@ -213,10 +181,6 @@ class VmasModelsROSInterface(Node):
             agent = Agent(
                 node=self,
                 robot_id=id_list[i],
-                weight=self.agent_weight,
-                pos_history_length=self.pos_history_length,
-                grid=self.occupancy_grid,
-                num_covered_targets=self.num_covered_targets,
                 task_config = config["task_config"].value,
                 deployment_config = deployment_config,
                 device=self.device
@@ -230,22 +194,6 @@ class VmasModelsROSInterface(Node):
         self.world = World(agents,self.action_dt)
         
         self.get_logger().info("ROS2 starting ..")
-        
-    def _create_occupancy_grid(self):
-        
-        self.occupancy_grid = WorldOccupancyGrid(
-            batch_size=1,
-            x_dim=MAP_NORMAL_SIZE, # [-1,1]
-            y_dim=MAP_NORMAL_SIZE, # [-1,1]
-            x_scale=self.x_semidim,
-            y_scale=self.y_semidim,
-            num_cells=self.num_grid_cells,
-            num_targets=self.n_target_classes * self.n_targets_per_class,
-            num_targets_per_class=self.n_targets_per_class,
-            visit_threshold=self.grid_visit_threshold,
-            embedding_size=self.embedding_size,
-            device=self.device)
-        self._covering_range = self.occupancy_grid.cell_radius
     
     def timer_callback(self):
         if not self._all_states_received():
@@ -256,18 +204,17 @@ class VmasModelsROSInterface(Node):
             self._handle_termination()
             return
 
-        obs_list, pos_list, vel_list = self._collect_observations()
+        obs_list = self._collect_observations()
         if not obs_list:
             self.get_logger().warn("No valid observations collected. Skipping this timestep.")
             return
 
-        input_td = self._prepare_input_tensor(obs_list, pos_list, vel_list)
+        input_td = self._prepare_input_tensor(obs_list)
 
         with torch.no_grad(), set_exploration_type(ExplorationType.DETERMINISTIC):
             output_td = self.policy(input_td)
 
         action = output_td[("agents", "action")]
-
 
         self._issue_commands_to_agents(action)
         self.step_count += 1
@@ -282,43 +229,32 @@ class VmasModelsROSInterface(Node):
         self.get_logger().info(f"Robots reached {self.max_steps} steps. Stopping.")
         self.timer.cancel()
         self.stop_all_agents()
-        self.occupancy_grid.reset_all()
-        if self.use_speech_to_text:
-            self.prompt_for_new_speech_instruction()
-        else:
-            self.prompt_for_new_instruction()
+        self.prompt_for_new_instruction()
 
     def _collect_observations(self):
-        obs_list, pos_list, vel_list = [], [], []
+        obs_list = []
 
         for agent in self.world.agents:
             if not agent.state_buffer:
                 self.get_logger().warn(f"No state in buffer for agent {agent.robot_id}")
-                continue
+                return
 
-            latest_state = agent.state_buffer.pop()
-            if self.use_gnn:
-                obs_list.append(latest_state["obs"].float())
-                pos_list.append(latest_state["pos"].float())
-                vel_list.append(latest_state["vel"].float())
-            else:
-                obs_list.append(latest_state.float())
+            latest_state = agent.state_buffer[-1]
+            feat = torch.cat([
+                latest_state["pos"],
+                latest_state["rot"],
+                latest_state["vel"],
+                latest_state["obs"],], dim=-1).float()   # shape (1, 6)
+            obs_list.append(feat)
 
-        return obs_list, pos_list, vel_list
+        return obs_list
 
-    def _prepare_input_tensor(self, obs_list, pos_list, vel_list):
+    def _prepare_input_tensor(self, obs_list):
         obs_tensor = torch.cat(obs_list, dim=0)
 
-        if self.use_gnn:
-            return TensorDict({
-                ("agents", "observation", "obs"): obs_tensor,
-                ("agents", "observation", "pos"): torch.cat(pos_list, dim=0),
-                ("agents", "observation", "vel"): torch.cat(vel_list, dim=0),
-            }, batch_size=[len(obs_list)])
-        else:
-            return TensorDict({
-                ("agents", "observation"): obs_tensor,
-            }, batch_size=[len(obs_list)])
+        return TensorDict({
+            ("agents", "observation"): obs_tensor,
+        }, batch_size=[len(obs_list)])
     
     def clamp_velocity_to_bounds(self, cmd_vel: torch.Tensor, agent) -> List[float]:
         """
@@ -326,9 +262,9 @@ class VmasModelsROSInterface(Node):
         accounting for the agent's radius and timestep.
         """
         pos = agent.state.pos[0]  # shape: (2,)
-        vel = cmd_vel
+        vel = cmd_vel.clone()
         
-        # Scale Action to deplyoment environment
+        # Scale Action to deployment environment
         vel[X] = vel[X] * self.x_semidim / self.task_x_semidim
         vel[Y] = vel[Y] * self.y_semidim / self.task_y_semidim
 
@@ -382,73 +318,51 @@ class VmasModelsROSInterface(Node):
             agent.mytime += self.action_dt
 
     def stop_all_agents(self):
+        if getattr(self, "timer", None): self.timer.cancel()
         for agent in self.world.agents:
-            agent.state_buffer = [] 
-            agent.timer.cancel()
+            if agent.timer is not None:
+                agent.timer.cancel()
+            agent.state_buffer.clear()
             agent.send_zero_velocity()
     
+    def _parse_goal_from_input(self, txt: str) -> torch.Tensor:
+        """
+        Expected formats:
+        •  "3.0 -2.5"
+        •  "3.0, -2.5"
+        Returns a (1, 2) float32 tensor on the correct device.
+        """
+        # replace comma with space, split, take first two items
+        try:
+            n_str, e_str = txt.replace(",", " ").split()[:2]
+            goal = torch.tensor([[float(n_str), float(e_str)]],
+                                dtype=torch.float32,
+                                device=self.device)
+            return goal
+        except Exception:
+            raise ValueError(
+                "Invalid goal format. Please enter two numbers, e.g. '1.2 -0.8'"
+            )
+    
     def prompt_for_new_instruction(self):
-        new_sentence = input("Enter a new instruction for the agents: ")
+        txt = input("Enter N,E goal for the agents: ")
         try:
-            embedding = torch.tensor(self.llm.encode([new_sentence]), device=self.device).squeeze(0)
-        except Exception as e:
-            self.get_logger().error(f"Failed to encode instruction: {e}")
+            goal_ne = self._parse_goal_from_input(txt)
+            gx, gy = convert_ne_to_xy(goal_ne[0].item(), goal_ne[1].item())
+            goal = torch.tensor([[gx, gy]], dtype=torch.float32, device=self.device)
+        except ValueError as e:
+            self.get_logger().error(str(e))
             return
-        self.occupancy_grid.embeddings[0] = embedding
 
         # Reset step count and timers
         self.step_count = 0
+        if agent.timer: agent.timer.cancel(); agent.timer = None
         self.timer = self.create_timer(self.action_dt, self.timer_callback)
         for agent in self.world.agents:
             agent.mytime = 0
             agent.timer = self.create_timer(agent.obs_dt, agent.collect_observation)
+            agent.goal = goal
         self.get_logger().info("Starting agents with new instruction.")
-
-
-    def prompt_for_new_speech_instruction(self):
-        
-        recognizer = sr.Recognizer()
-        mic = sr.Microphone()
-
-        self.get_logger().info("Listening for new instruction... (or press Enter to type instead)")
-
-        try:
-            with mic as source:
-                recognizer.adjust_for_ambient_noise(source)
-                audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
-                print(f"\n Audio recieved, sending to Google Speech API""\n")
-            new_sentence = recognizer.recognize_google(audio)
-            print(f"\n[Speech Recognized] \"{new_sentence}\"\n")
-            self.get_logger().info(f"Received spoken instruction: {new_sentence}")
-        except (sr.WaitTimeoutError, sr.UnknownValueError, sr.RequestError) as e:
-            self.get_logger().warn(f"Speech recognition failed: {e}")
-            user_input = input("Speech recognition failed. Type instruction or press Enter to try again: ").strip()
-            if user_input:
-                new_sentence = user_input
-            else:
-                self.get_logger().info("Retrying speech recognition...")
-                return self.prompt_for_new_speech_instruction()
-        except Exception as e:
-            self.get_logger().error(f"Unexpected error during speech recognition: {e}")
-            return
-
-        try:
-            embedding = torch.tensor(self.llm.encode([new_sentence]), device=self.device).squeeze(0)
-        except Exception as e:
-            self.get_logger().error(f"Failed to encode instruction: {e}")
-            return
-
-        self.occupancy_grid.embeddings[0] = embedding
-
-        # Reset step count and timers
-        self.step_count = 0
-        self.timer = self.create_timer(self.action_dt, self.timer_callback)
-        for agent in self.world.agents:
-            agent.mytime = 0
-            agent.timer = self.create_timer(agent.obs_dt, agent.collect_observation)
-
-        self.get_logger().info("Starting agents with new instruction.")
-
 
 def get_runtime_log_dir():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -456,7 +370,6 @@ def get_runtime_log_dir():
     log_dir = runtime_dir / f"run_{timestamp}"
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir
-
 
 # Manually parse config_path and config_name from CLI
 def extract_initial_config():
@@ -468,14 +381,14 @@ def extract_initial_config():
             config_name = arg.split("=", 1)[1]
     return config_path, config_name
 
+# Run script with:
+# python deployment/debug/debug_policy/navigation_deployment.py config_path=path_to/navigation_single_agent config_name=benchmarl_mappo.yaml
 config_path, config_name = extract_initial_config()
-
 @hydra.main(config_path=config_path, config_name=config_name, version_base="1.1")
 def main(cfg: DictConfig) -> None:
     rclpy.init()
 
     restore_path = cfg.restore_path  # This should now work
-    use_speech_to_text = cfg.use_speech_to_text
 
     # Optionally re-load the config (if merging CLI overrides etc.)
     full_config_path = Path(config_path) / config_name
@@ -494,14 +407,10 @@ def main(cfg: DictConfig) -> None:
     ros_interface_node = VmasModelsROSInterface(
         config=cfg,
         log_dir=log_dir,
-        restore_path=str(restore_path),
-        use_speech_to_text=use_speech_to_text
+        restore_path=str(restore_path)
     )
     
-    if use_speech_to_text:
-        ros_interface_node.prompt_for_new_speech_instruction()
-    else:
-        ros_interface_node.prompt_for_new_instruction()
+    ros_interface_node.prompt_for_new_instruction()
 
     def sigint_handler(sig, frame):
         ros_interface_node.get_logger().info('SIGINT received. Stopping timer and sending zero velocity...')
