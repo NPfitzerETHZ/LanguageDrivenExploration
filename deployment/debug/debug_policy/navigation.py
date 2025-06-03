@@ -16,7 +16,7 @@ from vmas.simulator.utils import Color, ScenarioUtils, X, Y
 
 from vmas.simulator.controllers.velocity_controller import VelocityController
 from vmas.simulator.dynamics.holonomic import Holonomic
-from kinematic_unicycle import KinematicUnicycle
+from scenarios.kinematic_dynamic_models.kinematic_unicycle import KinematicUnicycle
 
 if typing.TYPE_CHECKING:
     from vmas.simulator.rendering import Geom

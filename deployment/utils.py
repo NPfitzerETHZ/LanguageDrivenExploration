@@ -16,9 +16,8 @@ from benchmarl.models.mlp import MlpConfig
 from benchmarl.utils import DEVICE_TYPING
 
 # Local Modules
-sys.path.insert(0, "/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration")
 from scenarios.centralized.multi_agent_llm_exploration import MyLanguageScenario
-from debug.debug_policy.navigation import NavScenario
+from deployment.debug.debug_policy.navigation import NavScenario
 
 
 def convert_ne_to_xy(north: float, east: float) -> tuple[float, float]:

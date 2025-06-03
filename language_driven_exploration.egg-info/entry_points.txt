@@ -1,0 +1,2 @@
+[console_scripts]
+my-deployment = deployment.my_deployment:main

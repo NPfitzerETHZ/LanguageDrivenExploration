@@ -304,8 +304,8 @@ class MyLanguageScenario(BaseScenario):
 
     def observation(self, agent: Agent):
         """Collect Observations from the environment"""
-        return observation_torchrl(agent, self) 
-        #return observation(agent, self)  
+        #return observation_torchrl(agent, self) 
+        return observation(agent, self)  
     
     def pre_step(self):
         

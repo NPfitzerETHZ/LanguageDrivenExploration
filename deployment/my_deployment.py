@@ -28,7 +28,6 @@ from freyja_msgs.msg import CurrentState
 from freyja_msgs.msg import WaypointTarget
 
 # Local Modules
-sys.path.insert(0, "/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration")
 from scenarios.grids.world_occupancy_grid import WorldOccupancyGrid
 from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory
 from scenarios.centralized.scripts.observation import observation
@@ -423,9 +422,9 @@ class VmasModelsROSInterface(Node):
 
         # Reset step count and timers
         self.step_count = 0
-        if agent.timer: agent.timer.cancel(); agent.timer = None
         self.timer = self.create_timer(self.action_dt, self.timer_callback)
         for agent in self.world.agents:
+            if agent.timer: agent.timer.cancel(); agent.timer = None
             agent.mytime = 0
             agent.timer = self.create_timer(agent.obs_dt, agent.collect_observation)
         self.get_logger().info("Starting agents with new instruction.")
