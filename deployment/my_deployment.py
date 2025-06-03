@@ -416,6 +416,7 @@ class VmasModelsROSInterface(Node):
             with mic as source:
                 recognizer.adjust_for_ambient_noise(source)
                 audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
+                print(f"\n Audio recieved, sending to Google Speech API""\n")
             new_sentence = recognizer.recognize_google(audio)
             print(f"\n[Speech Recognized] \"{new_sentence}\"\n")
             self.get_logger().info(f"Received spoken instruction: {new_sentence}")
