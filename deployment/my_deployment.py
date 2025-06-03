@@ -467,10 +467,10 @@ class VmasModelsROSInterface(Node):
 
        # Reset step count and timers
         self.step_count = 0
-        if agent.timer: agent.timer.cancel(); agent.timer = None
         self.timer = self.create_timer(self.action_dt, self.timer_callback)
         for agent in self.world.agents:
             agent.mytime = 0
+            if agent.timer: agent.timer.cancel(); agent.timer = None
             agent.timer = self.create_timer(agent.obs_dt, agent.collect_observation)
         self.get_logger().info("Starting agents with new instruction.")
     
@@ -521,8 +521,6 @@ def main(cfg: DictConfig) -> None:
         ros_interface_node.prompt_for_new_speech_instruction()
     else:
         ros_interface_node.prompt_for_new_instruction()
-    
-    ros_interface_node.prompt_for_new_instruction()
 
     def sigint_handler(sig, frame):
         ros_interface_node.get_logger().info('SIGINT received. Stopping timer and sending zero velocity...')
