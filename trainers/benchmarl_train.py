@@ -50,6 +50,7 @@ def get_env_fun(
 # Comms_radius in normalized Frame
 comms_radius = 1.0
 use_gnn = False
+use_conv_2d = False
 
 VmasTask.get_env_fun = get_env_fun
 
@@ -102,6 +103,7 @@ task.config = {
 
     # === Agent Communication & GNNs ===
     "use_gnn": use_gnn,
+    "use_conv_2d": use_conv_2d,
     "comm_dim": 0,
     "comms_radius": comms_radius,
 
@@ -178,7 +180,7 @@ model_config = MyModelConfig(
     activation_class=nn.ReLU,  # Activation function to use
     use_gnn=use_gnn,  # Whether to use GNN or not
     use_sentence_encoder=False,
-    use_conv_2d=False, 
+    use_conv_2d=use_conv_2d, 
     emb_dim=64
 )
 critic_model_config = MyModelConfig(   
@@ -195,7 +197,7 @@ critic_model_config = MyModelConfig(
     activation_class=nn.ReLU,  # Activation function to use
     use_gnn=False,  # Whether to use GNN or not
     use_sentence_encoder=False,
-    use_conv_2d=False, 
+    use_conv_2d=use_conv_2d, 
     emb_dim=64
 )
 #model_config = MlpConfig(num_cells=[512,256,256],layer_class=nn.Linear,activation_class=nn.ReLU)

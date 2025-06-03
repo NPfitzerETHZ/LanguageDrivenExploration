@@ -110,7 +110,7 @@ class MyModel(Model):
             is_critic=kwargs.pop("is_critic"),
         )
         
-        conv_out_channel_dim = 3 if self.use_conv_2d else self.input_spec[('agents', 'observation', self.grid_key)].shape[-1]
+        conv_out_channel_dim = 3 if self.use_conv_2d else int(self.input_spec[('agents', 'observation', self.grid_key)].shape[-1]**(1/2))
         
         #==== Setup Conv layer ====#
         if self.use_conv_2d:
@@ -234,8 +234,6 @@ class MyModel(Model):
             G = grid_visit.shape[-1]
             batch_grid = grid_visit.view(-1,1,G, G)
             grid_visit = self.conv_2d(batch_grid).mean(dim=(-3)).view(*grid_visit.shape[:-3], grid_visit.shape[-3], -1)
-        else:
-            grid_visit = grid_visit.view(*grid_visit.shape[:-2], -1)
         
         node_feat = [grid_visit]
         if pos is not None and not self.exclude_pos_from_node_features:

@@ -50,6 +50,7 @@ def load_scenario_config(kwargs, env):
 
     # === Agent Communication & GNNs ===
     env.use_gnn = kwargs.pop("use_gnn", False)
+    env.use_conv_2d = kwargs.pop("use_conv_2d", False)
     env.comm_dim = kwargs.pop("comm_dim", 1)
     env._comms_range = kwargs.pop("comms_radius", 0.35)
 
@@ -150,6 +151,7 @@ def load_scenario_config_yaml(config, env):
 
     # === Agent Communication & GNNs ===
     env.use_gnn = cfg.use_gnn
+    env.use_conv_2d = cfg.use_conv_2d
     env.comm_dim = cfg.comm_dim
     env._comms_range = cfg.comms_radius
 

@@ -16,7 +16,7 @@ if typing.TYPE_CHECKING:
 from scenarios.kinematic_dynamic_models.kinematic_unicycle import KinematicUnicycle
 from scenarios.grids.world_occupancy_grid import WorldOccupancyGrid, load_task_data, load_decoder
 from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory
-from scenarios.centralized.scripts.observation import observation, observation_torchrl
+from scenarios.centralized.scripts.observation import observation
 from scenarios.centralized.scripts.rewards import compute_reward
 from scenarios.centralized.scripts.load_config import load_scenario_config
 

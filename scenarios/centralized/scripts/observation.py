@@ -88,8 +88,11 @@ def observation(agent, env):
         obs_dict["target_obs"] = env.occupancy_grid.get_grid_target_observation(pos, env.mini_grid_radius)
     
     # === Occupancy Grid ===
-    #obs_dict["grid_obs"] = env.occupancy_grid.get_grid_visits_obstacle_observation_2d(pos, env.mini_grid_radius * 2)
-    obs_dict["grid_obs"] = env.occupancy_grid.get_grid_visits_obstacle_observation_2d(pos, env.mini_grid_radius)
+    if env.use_conv_2d:
+        obs_dict["grid_obs"] = env.occupancy_grid.get_grid_visits_obstacle_observation_2d(pos, env.mini_grid_radius * 2)
+    else:
+        obs_dict["grid_obs"] = env.occupancy_grid.get_grid_visits_obstacle_observation(pos, env.mini_grid_radius)
+        
 
     # === Pose ===
     obs_dict["pos"] = pos_norm
