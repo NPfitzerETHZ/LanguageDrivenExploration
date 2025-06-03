@@ -66,7 +66,7 @@ task.config = {
     "n_obstacles": 0,
 
     # === Agent/Target Counts & Behavior ===
-    "n_agents": 3,
+    "n_agents": 1,
     "agents_per_target": 1,
     "n_targets_per_class": 4,
     "n_target_classes": 1,
@@ -90,7 +90,7 @@ task.config = {
     "use_expo_search_rew": True,
     "grid_visit_threshold": 2,
     "exploration_rew_coeff": -0.05,
-    "new_cell_rew_coeff": 0.15,
+    "new_cell_rew_coeff": 0.05,
     "heading_exploration_rew_coeff": 30, #30,
 
     # === Lidar & Sensing ===
@@ -117,7 +117,7 @@ task.config = {
     "use_confidence_data": False,
 
     # === Grid Settings ===
-    "num_grid_cells": 144,
+    "num_grid_cells": 225,
     "mini_grid_radius": 1,
 
     # === Movement & Dynamics ===
@@ -164,6 +164,8 @@ model_config = MyModelConfig(
     gnn_kwargs={"add_self_loops": False, "residual": True}, # kwargs of GATv2Conv, residual is helpf>
     position_key="pos",
     pos_features=2,
+    rotation_key="rot",
+    rot_features=1,
     velocity_key="vel",
     vel_features=2,
     sentence_key="sentence_embedding",
@@ -182,6 +184,7 @@ model_config = MyModelConfig(
 critic_model_config = MyModelConfig(   
     sentence_key="sentence_embedding",
     position_key="pos",
+    rotation_key="rot",
     velocity_key="vel",
     grid_key="grid_obs",
     target_key="target_obs",

@@ -40,10 +40,11 @@ Y = 1
 MAP_NORMAL_SIZE = 2
 
 class State:
-    def __init__(self, pos, vel, device):
+    def __init__(self, pos, vel, rot, device):
         self.device = device
         self.pos = torch.tensor(pos, dtype=torch.float32, device=self.device).unsqueeze(0)
         self.vel = torch.tensor(vel, dtype=torch.float32, device=self.device).unsqueeze(0)
+        self.rot = torch.tensor(vel, dtype=torch.float32, device=self.device).unsqueeze(0)
 
 class Agent:
     def __init__(
@@ -82,6 +83,7 @@ class Agent:
         self.state = State(
             pos=[0.0, 0.0],
             vel=[0.0, 0.0],
+            rot=[0.0],
             device=self.device
         )
         
@@ -147,6 +149,7 @@ class Agent:
         
         self.state.pos[0,X], self.state.pos[0,Y] = convert_ne_to_xy(current_pos_n, current_pos_e)
         self.state.vel[0,X], self.state.vel[0,Y] = convert_ne_to_xy(current_vel_n, current_vel_e)
+        self.state.rot[0,0] = msg.state_vector[5]
         
         self.state_received = True
     
@@ -490,7 +493,7 @@ def extract_initial_config():
     return config_path, config_name
 
 # Run script with:
-# python deployment/debug/debug_policy/navigation_deployment.py config_path=path_to/navigation_single_agent config_name=benchmarl_mappo.yaml
+# python deployment/my_deployment.py config_path=path_to/deployment_checkpoint_folder config_name=benchmarl_mappo.yaml
 config_path, config_name = extract_initial_config()
 @hydra.main(config_path=config_path, config_name=config_name, version_base="1.1")
 def main(cfg: DictConfig) -> None:
@@ -505,12 +508,6 @@ def main(cfg: DictConfig) -> None:
     cfg = OmegaConf.merge(user_cfg, cfg)
 
     log_dir = get_runtime_log_dir()
-
-    # Copy files for reproducibility
-    for src in Path('./src/LanguageDrivenExploration/deployment').rglob("*.py"):
-        shutil.copy2(src, log_dir / src.name)
-    for src in Path(config_path).rglob("*.yaml"):
-        shutil.copy2(src, log_dir / src.name)
 
     # Instantiate interface
     ros_interface_node = VmasModelsROSInterface(

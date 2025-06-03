@@ -34,10 +34,11 @@ X = 0
 Y = 1
 
 class State:
-    def __init__(self, pos, vel, device):
+    def __init__(self, pos, vel, rot, device):
         self.device = device
         self.pos = torch.tensor(pos, dtype=torch.float32, device=self.device).unsqueeze(0)
         self.vel = torch.tensor(vel, dtype=torch.float32, device=self.device).unsqueeze(0)
+        self.rot = torch.tensor(vel, dtype=torch.float32, device=self.device).unsqueeze(0)
 
 class Agent:
     def __init__(
@@ -75,6 +76,7 @@ class Agent:
         self.state = State(
             pos=[0.0, 0.0],
             vel=[0.0, 0.0],
+            rot=[0.0],
             device=self.device
         )
         
@@ -111,6 +113,7 @@ class Agent:
         
         self.state.pos[0,X], self.state.pos[0,Y] = convert_ne_to_xy(current_pos_n, current_pos_e)
         self.state.vel[0,X], self.state.vel[0,Y] = convert_ne_to_xy(current_vel_n, current_vel_e)
+        self.state.rot[0] = msg.state_vector[5]
         
         self.state_received = True
     
@@ -119,9 +122,10 @@ class Agent:
         if self.goal is not None and self.state_received:
             
             obs = {
+                "pos": 1 / self.node.agent_radius * self.state.pos / self._scale,
+                "rot": 1 / self.node.agent_radius * self.state.rot,
+                "vel": 1 / self.node.agent_radius * self.state.vel / self._scale,
                 "obs": (self.state.pos - self.goal) / self._scale,
-                "pos": self.state.pos / self._scale,
-                "vel": self.state.vel / self._scale
             }
             
             self.state_buffer.append(obs)
@@ -236,9 +240,11 @@ class VmasModelsROSInterface(Node):
                 return
 
             latest_state = agent.state_buffer[-1]
-            feat = torch.cat([latest_state["obs"],
-                  latest_state["pos"],
-                  latest_state["vel"]], dim=-1).float()   # shape (1, 6)
+            feat = torch.cat([
+                latest_state["pos"],
+                latest_state["rot"],
+                latest_state["vel"],
+                latest_state["obs"],], dim=-1).float()   # shape (1, 6)
             obs_list.append(feat)
 
         return obs_list

@@ -65,11 +65,13 @@ class MyModel(Model):
         position_key: Optional[str],
         exclude_pos_from_node_features: Optional[bool],
         velocity_key: Optional[str],
+        rotation_key: Optional[str],
         sentence_key: Optional[str],
         grid_key: Optional[str],
         target_key: Optional[str],
         edge_radius: Optional[float],
         pos_features: Optional[int],
+        rot_features: Optional[int],
         vel_features: Optional[int],
         emb_dim: Optional[int],
         use_gnn: bool,
@@ -80,6 +82,7 @@ class MyModel(Model):
         self.topology = topology
         self.self_loops = self_loops
         self.position_key = position_key
+        self.rotation_key = rotation_key
         self.velocity_key = velocity_key
         self.sentence_key = sentence_key
         self.grid_key = grid_key
@@ -107,7 +110,7 @@ class MyModel(Model):
             is_critic=kwargs.pop("is_critic"),
         )
         
-        conv_out_channel_dim = 3
+        conv_out_channel_dim = 3 if self.use_conv_2d else self.input_spec[('agents', 'observation', self.grid_key)].shape[-1]
         
         #==== Setup Conv layer ====#
         if self.use_conv_2d:
@@ -129,6 +132,8 @@ class MyModel(Model):
                 self.input_features += self.pos_features - 1
             if self.velocity_key is not None:
                 self.input_features += self.vel_features
+            if self.rotation_key is not None:
+                self.input_features += rot_features
 
             if gnn_kwargs is None:
                 gnn_kwargs = {}
@@ -183,9 +188,9 @@ class MyModel(Model):
         else:
             self.input_features = sum(
                 [spec.shape[-1] for key, spec in self.input_spec.items(True, True)
-                if _unravel_key_to_tuple(key)[-1] in (self.position_key, self.velocity_key, self.target_key, 'obs')])
+                if _unravel_key_to_tuple(key)[-1] in (self.position_key, self.velocity_key, self.target_key, self.rotation_key, 'obs')])
             self.input_features += (128 if self.use_sentence_encoder else self.input_spec[('agents', 'observation', self.sentence_key)].shape[-1])
-            self.input_features += (9 if self.use_conv_2d else self.input_spec[('agents', 'observation', self.grid_key)].shape[-1] * self.input_spec[('agents', 'observation', self.grid_key)].shape[-2])
+            self.input_features += conv_out_channel_dim ** 2 
 
         
         self.output_features = self.output_leaf_spec.shape[-1]
@@ -217,6 +222,7 @@ class MyModel(Model):
     def _forward(self, tensordict: TensorDictBase) -> TensorDictBase:
         # Gather in_key
         pos = tensordict.get(('agents','observation',self.position_key))
+        rot = tensordict.get(('agents','observation',self.rotation_key))
         vel = tensordict.get(('agents','observation',self.velocity_key))
         grid_visit = tensordict.get(('agents','observation',self.grid_key))
         sentence = tensordict.get(('agents','observation',self.sentence_key))
@@ -234,6 +240,8 @@ class MyModel(Model):
         node_feat = [grid_visit]
         if pos is not None and not self.exclude_pos_from_node_features:
             node_feat.append(pos)
+        if rot is not None:
+            node_feat.append(rot)
         if vel is not None:
             node_feat.append(vel)
         x = torch.cat(node_feat, dim=-1)
@@ -415,6 +423,8 @@ class MyModelConfig(ModelConfig):
     gnn_class: Optional[Type[torch_geometric.nn.MessagePassing]] = None
     position_key: Optional[str] = None
     pos_features: Optional[int] = 0
+    rotation_key: Optional[str] = None
+    rot_features: Optional[int] = 0
     velocity_key: Optional[str] = None
     vel_features: Optional[int] = 0
     sentence_key: Optional[str] = None
