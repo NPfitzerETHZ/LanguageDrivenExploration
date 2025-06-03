@@ -63,7 +63,6 @@ class MyLanguageScenario(BaseScenario):
             linear_friction=self.linear_friction,
             drag=0
         )
-
     
     def _create_agents(self, world, batch_dim, use_velocity_controler, silent):
         """Create agents and add them to the world."""
@@ -304,7 +303,6 @@ class MyLanguageScenario(BaseScenario):
 
     def observation(self, agent: Agent):
         """Collect Observations from the environment"""
-        #return observation_torchrl(agent, self) 
         return observation(agent, self)  
     
     def pre_step(self):
@@ -335,8 +333,6 @@ class MyLanguageScenario(BaseScenario):
 
         if self.use_velocity_controller and not self.use_kinematic_model:
             agent.controller.process_force()
-        # if self.use_kinematic_model:
-        #     agent.dynamics.process_action()
         
         
     def extra_render(self, env_index: int = 0) -> "List[Geom]":
