@@ -1,0 +1,35 @@
+actor_model:
+  # experiment/model/actor_model.yaml
+  _target_: trainers.models.benchmarl_model_wrappers.MyModelConfig
+
+  # ─── GNN settings ────────────────────────────────────────────────────────────
+  topology: from_pos
+  edge_radius: ${..model_shared.comms_radius}   # ← relative path, one level up
+  self_loops: true
+  gnn_class: torch_geometric.nn.conv.GATv2Conv
+  gnn_kwargs:
+    add_self_loops: false
+    residual: true
+
+  # ─── Feature keys & sizes ────────────────────────────────────────────────────
+  position_key: pos         # 2-D agent positions
+  pos_features: 2
+  rotation_key: rot         # heading angle
+  rot_features: 1
+  velocity_key: vel
+  vel_features: 2
+  sentence_key: sentence_embedding
+  grid_key: grid_obs
+  target_key: target_obs
+  exclude_pos_from_node_features: false
+
+  # ─── MLP head ────────────────────────────────────────────────────────────────
+  num_cells: [256, 256]
+  layer_class: torch.nn.Linear
+  activation_class: torch.nn.ReLU
+
+  # ─── Toggles ─────────────────────────────────────────────────────────────────
+  use_gnn: ${..model_shared.use_gnn}
+  use_sentence_encoder: false
+  use_conv_2d: ${..model_shared.use_conv_2d}
+  emb_dim: 64

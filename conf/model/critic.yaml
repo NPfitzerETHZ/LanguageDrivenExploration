@@ -1,0 +1,25 @@
+critic_model:
+  # experiment/model/critic_model.yaml
+  _target_: trainers.models.benchmarl_model_wrappers.MyModelConfig
+
+  # (No GNN for the critic -- we drop the topology/edge-radius fields)
+
+  # ─── Feature keys ────────────────────────────────────────────────────────────
+  sentence_key: sentence_embedding
+  position_key: pos
+  rotation_key: rot
+  velocity_key: vel
+  grid_key: grid_obs
+  target_key: target_obs
+  exclude_pos_from_node_features: false
+
+  # ─── MLP head ────────────────────────────────────────────────────────────────
+  num_cells: [512, 256]        # bigger first layer than actor
+  layer_class: torch.nn.Linear
+  activation_class: torch.nn.ReLU
+
+  # ─── Toggles ─────────────────────────────────────────────────────────────────
+  use_gnn: false               # critic is pure MLP
+  use_sentence_encoder: false
+  use_conv_2d: ${..model_shared.use_conv_2d}
+  emb_dim: 64

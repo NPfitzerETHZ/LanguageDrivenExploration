@@ -1,0 +1,65 @@
+defaults:
+  - /model/shared
+  - /model/actor    # actor-network params
+  - /model/critic   # critic-network params
+  - /task/language_exploration
+  - /algorithm/mappo
+
+experiment:
+
+  sampling_device: cpu
+  train_device: cpu
+  render: true
+  evaluation: true
+  share_policy_params: true
+  loggers: [wandb]
+
+  buffer_device: "cpu"
+  prefer_continuous_actions: True
+  collect_with_grad: False
+  parallel_collection: False
+
+  gamma: 0.99
+  lr: 0.00005
+  adam_eps: 0.000001
+  clip_grad_norm: True
+  clip_grad_val: 5
+
+  soft_target_update: True
+  polyak_tau: 0.005
+  hard_target_update_frequency: 5
+
+  exploration_eps_init: 0.8
+  exploration_eps_end: 0.01
+  exploration_anneal_frames: null
+
+  max_n_iters: null
+  max_n_frames: 18000000
+
+  on_policy_collected_frames_per_batch: 30000
+  on_policy_n_envs_per_worker: 125
+  on_policy_n_minibatch_iters: 20
+  on_policy_minibatch_size: 3000
+
+  off_policy_collected_frames_per_batch: 6000
+  off_policy_n_envs_per_worker: 10
+  off_policy_n_optimizer_steps: 1000
+  off_policy_train_batch_size: 128
+  off_policy_memory_size: 1000000
+  off_policy_init_random_frames: 0
+  off_policy_use_prioritized_replay_buffer: False
+  off_policy_prb_alpha: 0.6
+  off_policy_prb_beta: 0.4
+
+  evaluation_interval: 120000
+  evaluation_episodes: 10
+  evaluation_deterministic_actions: True
+
+  project_name: "benchmarl"
+  create_json: True
+  save_folder: null
+  restore_file: null
+  restore_map_location: null
+  checkpoint_interval: 150000
+  checkpoint_at_end: False
+  keep_checkpoints_num: 3

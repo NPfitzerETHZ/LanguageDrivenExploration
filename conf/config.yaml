@@ -1,0 +1,5 @@
+defaults:
+  - _self_
+  - experiment: language_driven_mappo  # ← single top-level switch
+
+seed: 1

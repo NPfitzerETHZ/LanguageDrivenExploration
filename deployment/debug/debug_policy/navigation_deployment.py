@@ -27,7 +27,6 @@ from freyja_msgs.msg import CurrentState
 from freyja_msgs.msg import WaypointTarget
 
 # Local Modules
-sys.path.insert(0, "/home/npfitzer/robomaster_ws/src/LanguageDrivenExploration")
 from deployment.utils import convert_ne_to_xy, convert_xy_to_ne, get_experiment
 
 X = 0

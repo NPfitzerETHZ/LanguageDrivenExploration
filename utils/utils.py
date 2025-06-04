@@ -6,7 +6,20 @@ from __future__ import annotations
 
 from tensordict import unravel_key
 from torchrl.envs import Transform
+import importlib
 
+def _load_class(class_path: str):
+    """
+    Given a full class path string like 'torch.nn.modules.linear.Linear',
+    dynamically load and return the class object.
+    """
+    try:
+        module_path, class_name = class_path.rsplit('.', 1)
+        module = importlib.import_module(module_path)
+        cls = getattr(module, class_name)
+        return cls
+    except (ImportError, AttributeError) as e:
+        raise ImportError(f"Cannot load class '{class_path}': {e}")
 
 def swap_last(source, dest):
     source = unravel_key(source)
@@ -41,3 +54,4 @@ class DoneTransform(Transform):
                 .expand(tensordict.get(("next", self.reward_key)).shape),
             )
         return tensordict
+
