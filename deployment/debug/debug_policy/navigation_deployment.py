@@ -254,20 +254,25 @@ class VmasModelsROSInterface(Node):
             ("agents", "observation"): obs_tensor,
         }, batch_size=[len(obs_list)])
     
-    def clamp_velocity_to_bounds(self, cmd_vel: torch.Tensor, agent) -> List[float]:
+    def clamp_velocity_to_bounds(self, action: torch.Tensor, agent) -> List[float]:
         """
         Clamp the velocity so the agent remains within the environment bounds,
         accounting for the agent's radius and timestep.
         """
         pos = agent.state.pos[0]  # shape: (2,)
-        vel = cmd_vel.clone()
+        vel = action.clone()
+        vel_norm = action[0]
+        theta = action[1]  
+        
+        vel[X] = vel_norm * torch.cos(theta)
+        vel[Y] = vel_norm * torch.sin(theta)
         
         # Scale Action to deployment environment
         vel[X] = vel[X] * self.x_semidim / self.task_x_semidim
         vel[Y] = vel[Y] * self.y_semidim / self.task_y_semidim
 
-        bounds_min = torch.tensor([-self.x_semidim, -self.y_semidim], device=cmd_vel.device) + self.agent_radius
-        bounds_max = torch.tensor([ self.x_semidim,  self.y_semidim], device=cmd_vel.device) - self.agent_radius
+        bounds_min = torch.tensor([-self.x_semidim, -self.y_semidim], device=action.device) + self.agent_radius
+        bounds_max = torch.tensor([ self.x_semidim,  self.y_semidim], device=action.device) - self.agent_radius
 
         next_pos = pos + vel * self.action_dt
 
@@ -281,19 +286,19 @@ class VmasModelsROSInterface(Node):
 
         # Clamp to the agent's max velocity norm
         clamped_vel = TorchUtils.clamp_with_norm(vel, agent.v_range)
-        return clamped_vel.tolist()
+        return clamped_vel.tolist(), theta.item()
 
     def _issue_commands_to_agents(self, action_tensor):
         real_time_str = datetime.now().isoformat()
 
         for i, agent in enumerate(self.world.agents):
 
-            cmd_vel = self.clamp_velocity_to_bounds(action_tensor[i], agent)
+            cmd_vel, theta = self.clamp_velocity_to_bounds(action_tensor[i], agent)
             vel_n, vel_e = convert_xy_to_ne(*cmd_vel)
 
             agent.reference_state.vn = vel_n
             agent.reference_state.ve = vel_e
-            agent.reference_state.yaw = math.pi / 2
+            agent.reference_state.yaw = theta
             agent.reference_state.an = agent.a_range
             agent.reference_state.ae = agent.a_range
             agent.reference_state.header.stamp = self.get_clock().now().to_msg()
