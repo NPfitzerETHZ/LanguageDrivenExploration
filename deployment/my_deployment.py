@@ -31,8 +31,9 @@ from freyja_msgs.msg import WaypointTarget
 from scenarios.grids.world_occupancy_grid import WorldOccupancyGrid
 from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory
 from scenarios.centralized.scripts.observation import observation
-from scenarios.centralized.scripts.load_config import load_scenario_config_yaml
+from scenarios.centralized.scripts.load_config import load_scenario_config
 from deployment.utils import convert_ne_to_xy, convert_xy_to_ne, get_experiment
+from trainers.benchmarl_setup_experiment import benchmarl_setup_experiment
 
 X = 0
 Y = 1
@@ -43,7 +44,7 @@ class State:
         self.device = device
         self.pos = torch.tensor(pos, dtype=torch.float32, device=self.device).unsqueeze(0)
         self.vel = torch.tensor(vel, dtype=torch.float32, device=self.device).unsqueeze(0)
-        self.rot = torch.tensor(vel, dtype=torch.float32, device=self.device).unsqueeze(0)
+        self.rot = torch.tensor(rot, dtype=torch.float32, device=self.device).unsqueeze(0)
 
 class Agent:
     def __init__(
@@ -159,7 +160,6 @@ class Agent:
         if len(self.state_buffer) > self.state_buffer_length:
             self.state_buffer = self.state_buffer[-self.state_buffer_length:]
         self.grid.update(self.state.pos)
-       
         
     def send_zero_velocity(self):
         # Send a zero velocity command
@@ -190,13 +190,14 @@ class VmasModelsROSInterface(Node):
         self.y_semidim = grid_config.y_semidim
         
         # Task Config
-        load_scenario_config_yaml(config,self)
+        load_scenario_config(config,self)
         self._create_occupancy_grid()
         self.num_covered_targets = torch.zeros(1, dtype=torch.int, device=self.device)
 
         # History Config
         self.pos_dim = 2
-        self.pos_history_length = config["task_config"].value.history_length
+        task_config = config["task_config"].params
+        self.pos_history_length = task_config.history_length
 
         # Load experiment and get policy
         experiment = get_experiment(config, restore_path, debug=False)
@@ -490,22 +491,19 @@ def extract_initial_config():
             config_path = arg.split("=", 1)[1]
         elif arg.startswith("config_name="):
             config_name = arg.split("=", 1)[1]
-    return config_path, config_name
+        elif arg.startswith("restore_path="):
+            restore_path = arg.split("=", 1)[1]
+    return config_path, config_name, restore_path
 
 # Run script with:
-# python deployment/my_deployment.py config_path=path_to/deployment_checkpoint_folder config_name=benchmarl_mappo.yaml
-config_path, config_name = extract_initial_config()
-@hydra.main(config_path=config_path, config_name=config_name, version_base="1.1")
+# python deployment/my_deployment.py --config-path=path_to/deployment_checkpoint_folder --config-name=benchmarl_mappo.yaml restore_path=path/to/checkpoint.pt
+@hydra.main(version_base=None,config_path="../../conf")
 def main(cfg: DictConfig) -> None:
+    print(OmegaConf.to_yaml(cfg, resolve=True))   # full merged config
     rclpy.init()
 
-    restore_path = cfg.restore_path  # This should now work
+    cfg.experiment.restore_path = cfg.restore_path
     use_speech_to_text = cfg.use_speech_to_text
-
-    # Optionally re-load the config (if merging CLI overrides etc.)
-    full_config_path = Path(config_path) / config_name
-    user_cfg = OmegaConf.load(full_config_path)
-    cfg = OmegaConf.merge(user_cfg, cfg)
 
     log_dir = get_runtime_log_dir()
 
@@ -513,7 +511,6 @@ def main(cfg: DictConfig) -> None:
     ros_interface_node = VmasModelsROSInterface(
         config=cfg,
         log_dir=log_dir,
-        restore_path=str(restore_path),
         use_speech_to_text=use_speech_to_text
     )
     

@@ -1,5 +1,5 @@
 defaults:
   - _self_
-  - experiment: language_driven_mappo  # ← single top-level switch
+  - /training/language_driven_mappo 
 
 seed: 1

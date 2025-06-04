@@ -105,11 +105,11 @@ class MyLanguageScenario(BaseScenario):
         sensors = []
         
         if self.use_target_lidar:
-            sensors.append(Lidar(world, n_rays=self.n_lidar_rays_entities, max_range=self._lidar_range, entity_filter=lambda e: e.name.startswith("target"), render_color=Color.GREEN))
+            sensors.append(Lidar(world, n_rays=self.n_lidar_rays_entities, max_range=self.lidar_range, entity_filter=lambda e: e.name.startswith("target"), render_color=Color.GREEN))
         if self.use_obstacle_lidar:
-            sensors.append(Lidar(world, n_rays=self.n_lidar_rays_entities, max_range=self._lidar_range, entity_filter=lambda e: e.name.startswith("obstacle"), render_color=Color.BLUE))
+            sensors.append(Lidar(world, n_rays=self.n_lidar_rays_entities, max_range=self.lidar_range, entity_filter=lambda e: e.name.startswith("obstacle"), render_color=Color.BLUE))
         if self.use_agent_lidar:
-            sensors.append(Lidar(world, n_rays=self.n_lidar_rays_agents, max_range=self._lidar_range, entity_filter=lambda e: e.name.startswith("agent"), render_color=Color.RED))
+            sensors.append(Lidar(world, n_rays=self.n_lidar_rays_agents, max_range=self.lidar_range, entity_filter=lambda e: e.name.startswith("agent"), render_color=Color.RED))
         return sensors
     
     def _create_agent_state_histories(self, agent, batch_dim):

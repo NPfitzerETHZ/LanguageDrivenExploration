@@ -1,0 +1,6 @@
+task_config:
+  desc: null
+  value:
+    x_semidim: 2.0
+    y_semidim: 2.0
+    covering_range: 0.15

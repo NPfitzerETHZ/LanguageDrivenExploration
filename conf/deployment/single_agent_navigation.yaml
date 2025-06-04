@@ -1,0 +1,24 @@
+defaults:
+  - _self_
+  - task: /task/single_agent_unicycle_exploration
+  - actor_model: /model/mlp
+  - critic_model: /model/mlp
+
+device: cpu
+restore_path: ../checkpoints/benchmarl/single_agent_unicycle_exploration/single_agent_unicycle_exploration.pt
+use_speech_to_text: false
+
+deployment:
+  a_range: 1.0
+  v_range: 1.0
+  id_list: [3]
+  max_steps: 200
+  use_gnn: true
+  action_dt: 0.1
+  obs_dt: 0.05
+  log_csv: true
+  llm_model: "thenlper/gte-large"
+  
+grid_config:
+  x_semidim: 3.0
+  y_semidim: 1.7

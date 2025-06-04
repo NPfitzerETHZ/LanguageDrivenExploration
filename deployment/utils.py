@@ -110,13 +110,13 @@ def get_experiment(config: DictConfig, restore_path: str, debug: bool = False) -
 
     Experiment._load_experiment = _load_experiment_cpu
 
-    experiment_config = ExperimentConfig(**config["experiment_config"].value)
+    experiment_config = ExperimentConfig(**config["experiment"])
     experiment_config.restore_file = restore_path
     task = VmasTask.NAVIGATION.get_from_yaml()
-    task.config = config["task_config"].value
-    algorithm_config = MappoConfig(**config["algorithm_config"].value)
+    task.config = config["task"].params
+    algorithm_config = MappoConfig(**config["algorithm"])
     
-    use_gnn = config["task_config"].value.use_gnn
+    use_gnn = config["task"].params.use_gnn
     
     if not use_gnn: 
         model_config = MlpConfig(**config["model_config"].value)

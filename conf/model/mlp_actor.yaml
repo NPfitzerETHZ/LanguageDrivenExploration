@@ -1,0 +1,12 @@
+actor_model:
+  desc: null
+  value:
+    num_cells:
+    - 256
+    - 256
+    layer_class: torch.nn.modules.linear.Linear
+    activation_class: torch.nn.modules.activation.ReLU
+    activation_kwargs: null
+    norm_class: null
+    norm_kwargs: null
+    _is_critic: false
