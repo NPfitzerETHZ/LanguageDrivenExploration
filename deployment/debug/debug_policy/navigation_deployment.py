@@ -38,7 +38,7 @@ class State:
         self.device = device
         self.pos = torch.tensor(pos, dtype=torch.float32, device=self.device).unsqueeze(0)
         self.vel = torch.tensor(vel, dtype=torch.float32, device=self.device).unsqueeze(0)
-        self.rot = torch.tensor(vel, dtype=torch.float32, device=self.device).unsqueeze(0)
+        self.rot = torch.tensor(rot, dtype=torch.float32, device=self.device).unsqueeze(0)
 
 class Agent:
     def __init__(
@@ -380,7 +380,7 @@ def extract_initial_config():
     return config_path, config_name
 
 # Run script with:
-# python deployment/debug/debug_policy/navigation_deployment.py config_path=path_to/navigation_single_agent config_name=benchmarl_mappo.yaml
+# python deployment/debug/debug_policy/navigation_deployment.py restore_path=/path_to_checkpoint.pt
 @hydra.main(version_base=None,config_path="../../../conf",config_name="deployment/single_agent_navigation")
 def main(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg, resolve=True))   # full merged config

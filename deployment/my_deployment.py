@@ -485,7 +485,7 @@ def get_runtime_log_dir():
     return log_dir
 
 # Run script with:
-# python deployment/my_deployment.py --config-path=path_to/deployment_checkpoint_folder --config-name=benchmarl_mappo.yaml restore_path=path/to/checkpoint.pt
+# python deployment/my_deployment.py --config-path=path_to/conf_folder --config-name=config_file_name restore_path=path/to/checkpoint.pt
 @hydra.main(version_base=None,config_path="../conf",config_name="deployment/unicycle_single_agent")
 def main(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg, resolve=True))   # full merged config
