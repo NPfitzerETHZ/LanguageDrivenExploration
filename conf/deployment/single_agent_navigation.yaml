@@ -3,7 +3,7 @@ defaults:
   - _self_
   - /experiment/experiment
   - /model/shared
-  - /model/mymodel_actor    # actor-network params
+  - /model/mlp_actor    # actor-network params
   - /task/single_agent_navigation
   - /algorithm/mappo
 

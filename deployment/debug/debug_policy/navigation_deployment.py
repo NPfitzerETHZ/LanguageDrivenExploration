@@ -45,8 +45,6 @@ class Agent:
     self,
     node,
     robot_id: int,
-    weight: float,
-    task_config,
     deployment_config,
     device: DEVICE_TYPING):
         
@@ -57,8 +55,7 @@ class Agent:
         
         self.node = node
         self.robot_id = robot_id
-        self.weight = weight
-        
+    
         # Timer to update state
         self.obs_dt = deployment_config.obs_dt
         self.mytime = 0.0
@@ -122,9 +119,9 @@ class Agent:
         if self.goal is not None and self.state_received:
             
             obs = {
-                "pos": 1 / self.node.agent_radius * self.state.pos / self._scale,
-                "rot": 1 / self.node.agent_radius * self.state.rot,
-                "vel": 1 / self.node.agent_radius * self.state.vel / self._scale,
+                "pos": self.state.pos / self._scale,
+                "rot": self.state.rot,
+                "vel": self.state.vel / self._scale,
                 "obs": (self.state.pos - self.goal) / self._scale,
             }
             
@@ -152,11 +149,12 @@ class VmasModelsROSInterface(Node):
     def __init__(self, config: DictConfig, log_dir: Path):
         super().__init__("vmas_ros_interface")
         self.device = config.device 
+        grid_config = config["grid_config"]
         deployment_config = config["deployment"]
         task_config = config["task"].params
-        self.x_semidim = deployment_config.x_semidim
-        self.y_semidim = deployment_config.y_semidim
-        self.n_agents = deployment_config.n_agents
+        self.x_semidim = grid_config.x_semidim
+        self.y_semidim = grid_config.y_semidim
+        self.n_agents = task_config.n_agents
         
         self.goal = None
         self.task_x_semidim = task_config.x_semidim
@@ -182,7 +180,6 @@ class VmasModelsROSInterface(Node):
             agent = Agent(
                 node=self,
                 robot_id=id_list[i],
-                task_config = task_config,
                 deployment_config = deployment_config,
                 device=self.device
             )
@@ -349,7 +346,7 @@ class VmasModelsROSInterface(Node):
         txt = input("Enter N,E goal for the agents: ")
         try:
             goal_ne = self._parse_goal_from_input(txt)
-            gx, gy = convert_ne_to_xy(goal_ne[0].item(), goal_ne[1].item())
+            gx, gy = convert_ne_to_xy(goal_ne[0,0].item(), goal_ne[0,1].item())
             goal = torch.tensor([[gx, gy]], dtype=torch.float32, device=self.device)
         except ValueError as e:
             self.get_logger().error(str(e))
@@ -357,10 +354,10 @@ class VmasModelsROSInterface(Node):
 
         # Reset step count and timers
         self.step_count = 0
-        if agent.timer: agent.timer.cancel(); agent.timer = None
         self.timer = self.create_timer(self.action_dt, self.timer_callback)
         for agent in self.world.agents:
             agent.mytime = 0
+            if agent.timer: agent.timer.cancel(); agent.timer = None
             agent.timer = self.create_timer(agent.obs_dt, agent.collect_observation)
             agent.goal = goal
         self.get_logger().info("Starting agents with new instruction.")
@@ -384,7 +381,7 @@ def extract_initial_config():
 
 # Run script with:
 # python deployment/debug/debug_policy/navigation_deployment.py config_path=path_to/navigation_single_agent config_name=benchmarl_mappo.yaml
-@hydra.main(version_base=None,config_path="../conf",config_name="deployment/unicycle_single_agent")
+@hydra.main(version_base=None,config_path="../../../conf",config_name="deployment/single_agent_navigation")
 def main(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg, resolve=True))   # full merged config
     rclpy.init()

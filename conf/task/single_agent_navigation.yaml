@@ -2,4 +2,8 @@ name: SAMPLING                          # maps to VmasTask.SAMPLING
 scenario_class: deployment.debug.debug_policy.navigation.NavScenario
 
 params:
+  n_agents: 1
+  x_semidim: 1.0
+  y_semidim: 1.0
+  agent_radius: 0.1
   max_steps: 100
