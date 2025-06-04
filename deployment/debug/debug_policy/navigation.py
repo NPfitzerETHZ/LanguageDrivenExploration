@@ -260,9 +260,9 @@ class NavScenario(BaseScenario):
             goal_poses.append(agent.state.pos - agent.goal.state.pos)
         return torch.cat(
             [
-                1 / self.agent_radius * agent.state.pos,
-                1 / self.agent_radius * agent.state.rot,
-                1 / self.agent_radius * agent.state.vel,
+                agent.state.pos,
+                agent.state.rot,
+                agent.state.vel,
             ]
             + goal_poses,
             dim=-1,

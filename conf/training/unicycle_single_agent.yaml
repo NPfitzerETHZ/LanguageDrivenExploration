@@ -1,0 +1,10 @@
+# @package _global_
+defaults:
+  - /experiment/experiment
+  - /model/shared
+  - /model/mymodel_actor    # actor-network params
+  - /model/mymodel_critic  # critic-network params
+  - /task/single_agent_unicycle_exploration
+  - /algorithm/mappo
+
+seed: 1

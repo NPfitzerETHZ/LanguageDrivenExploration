@@ -181,6 +181,7 @@ class VmasModelsROSInterface(Node):
         super().__init__("vmas_ros_interface")
         self.device = config.device 
         deployment_config = config["deployment"]
+        task_config = config["task"].params
         self.llm = SentenceTransformer(deployment_config.llm_model, device="cpu")
         self.use_speech_to_text = use_speech_to_text
 
@@ -196,7 +197,6 @@ class VmasModelsROSInterface(Node):
 
         # History Config
         self.pos_dim = 2
-        task_config = config["task"].params
         task_config.use_grid_data = False
         self.pos_history_length = task_config.history_length
 
@@ -223,7 +223,7 @@ class VmasModelsROSInterface(Node):
                 pos_history_length=self.pos_history_length,
                 grid=self.occupancy_grid,
                 num_covered_targets=self.num_covered_targets,
-                task_config = config["task_config"].value,
+                task_config = task_config,
                 deployment_config = deployment_config,
                 device=self.device
             )

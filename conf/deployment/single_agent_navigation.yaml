@@ -1,12 +1,16 @@
+# @package _global_
 defaults:
   - _self_
-  - task: /task/single_agent_unicycle_exploration
-  - actor_model: /model/mlp
-  - critic_model: /model/mlp
+  - /experiment/experiment
+  - /model/shared
+  - /model/mymodel_actor    # actor-network params
+  - /task/single_agent_navigation
+  - /algorithm/mappo
 
 device: cpu
-restore_path: ../checkpoints/benchmarl/single_agent_unicycle_exploration/single_agent_unicycle_exploration.pt
+restore_path: /home/npfitzer/robomaster_ws/src/LanguageDrivenExploration/checkpoints/benchmarl/single_agent_navigation/single_agent_navigation.pt
 use_speech_to_text: false
+seed: 1
 
 deployment:
   a_range: 1.0
@@ -18,7 +22,7 @@ deployment:
   obs_dt: 0.05
   log_csv: true
   llm_model: "thenlper/gte-large"
-  
+
 grid_config:
   x_semidim: 3.0
   y_semidim: 1.7

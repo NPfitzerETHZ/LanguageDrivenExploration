@@ -1,6 +1,5 @@
-task_config:
-  desc: null
-  value:
-    x_semidim: 2.0
-    y_semidim: 2.0
-    covering_range: 0.15
+name: SAMPLING                          # maps to VmasTask.SAMPLING
+scenario_class: deployment.debug.debug_policy.navigation.NavScenario
+
+params:
+  max_steps: 100

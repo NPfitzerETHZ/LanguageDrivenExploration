@@ -27,7 +27,8 @@ from freyja_msgs.msg import CurrentState
 from freyja_msgs.msg import WaypointTarget
 
 # Local Modules
-from deployment.helper_utils import convert_ne_to_xy, convert_xy_to_ne, get_experiment
+from deployment.helper_utils import convert_ne_to_xy, convert_xy_to_ne
+from trainers.benchmarl_setup_experiment import benchmarl_setup_experiment
 
 X = 0
 Y = 1
@@ -148,21 +149,22 @@ class World:
 
 class VmasModelsROSInterface(Node):
 
-    def __init__(self, config: DictConfig, log_dir: Path, restore_path: str):
+    def __init__(self, config: DictConfig, log_dir: Path):
         super().__init__("vmas_ros_interface")
         self.device = config.device 
         deployment_config = config["deployment"]
+        task_config = config["task"].params
         self.x_semidim = deployment_config.x_semidim
         self.y_semidim = deployment_config.y_semidim
         self.n_agents = deployment_config.n_agents
         
         self.goal = None
-        self.task_x_semidim = config["task_config"].value.x_semidim
-        self.task_y_semidim = config["task_config"].value.y_semidim
-        self.agent_radius = config["task_config"].value.agent_radius
+        self.task_x_semidim = task_config.x_semidim
+        self.task_y_semidim = task_config.y_semidim
+        self.agent_radius = task_config.agent_radius
 
         # Load experiment and get policy
-        experiment = get_experiment(config, restore_path, debug=True)
+        experiment = benchmarl_setup_experiment(cfg=config)
         self.policy = experiment.policy
 
         # Setup CSV logging
@@ -180,7 +182,7 @@ class VmasModelsROSInterface(Node):
             agent = Agent(
                 node=self,
                 robot_id=id_list[i],
-                task_config = config["task_config"].value,
+                task_config = task_config,
                 deployment_config = deployment_config,
                 device=self.device
             )
@@ -382,33 +384,21 @@ def extract_initial_config():
 
 # Run script with:
 # python deployment/debug/debug_policy/navigation_deployment.py config_path=path_to/navigation_single_agent config_name=benchmarl_mappo.yaml
-config_path, config_name = extract_initial_config()
-@hydra.main(config_path=config_path, config_name=config_name, version_base="1.1")
+@hydra.main(version_base=None,config_path="../conf",config_name="deployment/unicycle_single_agent")
 def main(cfg: DictConfig) -> None:
+    print(OmegaConf.to_yaml(cfg, resolve=True))   # full merged config
     rclpy.init()
 
-    restore_path = cfg.restore_path  # This should now work
-
-    # Optionally re-load the config (if merging CLI overrides etc.)
-    full_config_path = Path(config_path) / config_name
-    user_cfg = OmegaConf.load(full_config_path)
-    cfg = OmegaConf.merge(user_cfg, cfg)
+    cfg.experiment.restore_file = cfg.restore_path
 
     log_dir = get_runtime_log_dir()
-
-    # Copy files for reproducibility
-    for src in Path('./src/LanguageDrivenExploration/deployment').rglob("*.py"):
-        shutil.copy2(src, log_dir / src.name)
-    for src in Path(config_path).rglob("*.yaml"):
-        shutil.copy2(src, log_dir / src.name)
 
     # Instantiate interface
     ros_interface_node = VmasModelsROSInterface(
         config=cfg,
-        log_dir=log_dir,
-        restore_path=str(restore_path)
+        log_dir=log_dir
     )
-    
+
     ros_interface_node.prompt_for_new_instruction()
 
     def sigint_handler(sig, frame):

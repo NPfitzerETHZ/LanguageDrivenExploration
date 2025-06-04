@@ -1,5 +1,4 @@
 defaults:
   - _self_
-  - /training/language_driven_mappo 
+  - /training/unicycle_single_agent
 
-seed: 1
