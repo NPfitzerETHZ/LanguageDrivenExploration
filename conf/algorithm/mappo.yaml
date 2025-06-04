@@ -1,0 +1,3 @@
+type: mappo
+params:
+  entropy_coef: 0.0

@@ -92,11 +92,12 @@ def load_scenario_config(source, env):
     env    : your VMAS scenario environment
     """
     is_mapping = isinstance(source, Mapping)
-    pop = source.pop if is_mapping else None
 
     for dest_attr, key, default in PARAMS:
-        value = (pop(key, default) if is_mapping
-                 else getattr(source, key, default))
+        if is_mapping:
+            value = source.get(key, default)
+        else:
+            value = getattr(source, key, default)
         setattr(env, dest_attr, value)
 
     # --- derived attributes -------------------------------------------------
@@ -109,7 +110,3 @@ def load_scenario_config(source, env):
     env.pos_dim = env.vel_dim = 2
     env.viewer_zoom = 1
     env.plot_grid   = True
-
-    # --- stray-kwargs check for Mapping sources -----------------------------
-    if is_mapping:
-        ScenarioUtils.check_kwargs_consumed(source)

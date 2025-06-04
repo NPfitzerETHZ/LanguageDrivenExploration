@@ -19,8 +19,6 @@ logs/
 # Ignore macOS system files
 .DS_Store
 
-# ignore renderings
-mappo*
 
 experiments*
 wandb*

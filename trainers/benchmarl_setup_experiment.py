@@ -30,13 +30,12 @@ def _patch_env_creator(scenario_cls_path: str):
     VmasTask.get_env_fun = get_env_fun
     
 def benchmarl_setup_experiment(cfg: DictConfig) -> Experiment:
-    
     # ---------- TASK ----------
     task_enum = VmasTask[cfg.task.name]
-    task = task_enum.get_from_yaml()              # base defaults
-    task.config = cfg.task.params          # override with YAML params
+    task = task_enum.get_from_yaml()
+    task.config = cfg.task.params
 
-    _patch_env_creator(cfg.task.scenario_class)   # custom scenario
+    _patch_env_creator(cfg.task.scenario_class)
 
     # ---------- ALGORITHM ----------
     if cfg.algorithm.type.lower() == "mappo":
@@ -46,31 +45,42 @@ def benchmarl_setup_experiment(cfg: DictConfig) -> Experiment:
 
     algorithm_config.entropy_coef = cfg.algorithm.params.entropy_coef
 
-    # ----------- MODELS ----------
+    # ---------- ACTOR MODEL ----------
     actor_model = instantiate(cfg.model.actor_model)
-    critic_model = instantiate(cfg.model.critic_model)
+    actor_model.activation_class = _load_class(actor_model.activation_class)
+    actor_model.layer_class = _load_class(actor_model.layer_class)
 
-    # Load class objects dynamically
-    for model in [actor_model, critic_model]:
-        model.activation_class = _load_class(model.activation_class)
-        model.layer_class = _load_class(model.layer_class)
-
-    # Conditionally load GNN class if used
     if getattr(actor_model, "use_gnn", False):
         actor_model.gnn_class = _load_class(actor_model.gnn_class)
     else:
         actor_model.gnn_class = None
 
-    # ---------- EXPERIMENT ----------
+    # ---------- EXPERIMENT CONFIG ----------
     exp_cfg = ExperimentConfig(**cfg.experiment)
     exp_cfg.save_folder = Path(__file__).parent / "experiments"
     exp_cfg.save_folder.mkdir(exist_ok=True, parents=True)
 
-    return Experiment(
-        task=task,
-        algorithm_config=algorithm_config,
-        model_config=actor_model,
-        critic_model_config=critic_model,
-        seed=cfg.seed,
-        config=exp_cfg,
-    )
+    # ---------- RETURN EXPERIMENT ----------
+    if cfg.experiment.get("restore_file", None) is not None:
+        # restoring: use only actor model
+        return Experiment(
+            task=task,
+            algorithm_config=algorithm_config,
+            model_config=actor_model,
+            seed=cfg.seed,
+            config=exp_cfg,
+        )
+    else:
+        # training from scratch: use both actor and critic
+        critic_model = instantiate(cfg.model.critic_model)
+        critic_model.activation_class = _load_class(critic_model.activation_class)
+        critic_model.layer_class = _load_class(critic_model.layer_class)
+
+        return Experiment(
+            task=task,
+            algorithm_config=algorithm_config,
+            model_config=actor_model,
+            critic_model_config=critic_model,
+            seed=cfg.seed,
+            config=exp_cfg,
+        )

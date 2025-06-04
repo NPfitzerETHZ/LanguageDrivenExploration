@@ -27,7 +27,7 @@ from freyja_msgs.msg import CurrentState
 from freyja_msgs.msg import WaypointTarget
 
 # Local Modules
-from deployment.utils import convert_ne_to_xy, convert_xy_to_ne, get_experiment
+from deployment.helper_utils import convert_ne_to_xy, convert_xy_to_ne, get_experiment
 
 X = 0
 Y = 1
