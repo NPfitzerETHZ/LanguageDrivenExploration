@@ -292,6 +292,10 @@ class VmasModelsROSInterface(Node):
         clamped_vel = TorchUtils.clamp_with_norm(vel, agent.v_range)
         return clamped_vel.tolist(), omega.item()
 
+    def _wrap_to_pi(self, angle: float) -> float:
+        """Return the equivalent angle in the range [-π, π)."""
+        return (angle + math.pi) % (2 * math.pi) - math.pi
+
     def _issue_commands_to_agents(self, action_tensor):
         real_time_str = datetime.now().isoformat()
 
@@ -300,16 +304,21 @@ class VmasModelsROSInterface(Node):
             cmd_vel, cmd_omega = self.clamp_velocity_to_bounds(action_tensor[i], agent)
             vel_n, vel_e = convert_xy_to_ne(*cmd_vel)
 
+            yaw_now   = agent.state.rot.item()                      # current estimate from localisation
+            yaw_ref   = self._wrap_to_pi(yaw_now + cmd_omega * self.action_dt)
+
             agent.reference_state.vn = vel_n
             agent.reference_state.ve = vel_e
-            agent.reference_state.yrate = cmd_omega
+            agent.reference_state.yaw = yaw_ref
             agent.reference_state.an = agent.a_range
             agent.reference_state.ae = agent.a_range
             agent.reference_state.header.stamp = self.get_clock().now().to_msg()
 
             self.get_logger().info(
                 f"Robot {agent.robot_id} - Commanded velocity ne: {vel_n}, {vel_e} - "
+                f"Commanded yaw rate: {cmd_omega}"
                 f"pos: [{agent.state.pos[0,X]}, {agent.state.pos[0,Y]}] - "
+                f"yaw: [{agent.state.rot[0]}] - "
                 f"vel: [{agent.state.vel[0,X]}, {agent.state.vel[0,Y]}]"
             )
 
