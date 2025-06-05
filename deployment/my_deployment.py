@@ -323,67 +323,103 @@ class VmasModelsROSInterface(Node):
             return TensorDict({
                 ("agents", "observation"): obs_tensor,
             }, batch_size=[len(obs_list)])
-    
-    def clamp_velocity_to_bounds(self, cmd_vel: torch.Tensor, agent) -> List[float]:
+
+    def clamp_velocity_to_bounds(self, action: torch.Tensor, agent):
         """
-        Clamp the velocity so the agent remains within the environment bounds,
-        accounting for the agent's radius and timestep.
+        • If self.use_kinematic_model is False
+            action = [vx, vy]               (Cartesian velocity in task space)
+        • If self.use_kinematic_model is True
+            action = [‖v‖, ω]               (forward-speed ‖v‖ and yaw-rate ω)
+
+        Returns
+        -------
+        (vel_xy, omega)
+            vel_xy : list[float] – clamped (vx, vy)
+            omega  : float | None – yaw-rate in rad s⁻¹ (None when kinematic model is OFF)
         """
-        pos = agent.state.pos[0]  # shape: (2,)
-        vel = cmd_vel.clone()
-        
-        # Scale Action to deployment environment
-        vel[X] = vel[X] * self.x_semidim / self.task_x_semidim
-        vel[Y] = vel[Y] * self.y_semidim / self.task_y_semidim
+        pos   = agent.state.pos[0]              # shape (2,)
+        theta = agent.state.rot[0]              # shape (1,)
+        vel   = action.clone()
 
-        bounds_min = torch.tensor([-self.x_semidim, -self.y_semidim], device=cmd_vel.device) + self.agent_radius
-        bounds_max = torch.tensor([ self.x_semidim,  self.y_semidim], device=cmd_vel.device) - self.agent_radius
+        # ── 1. Interpret the raw action ──────────────────────────────────────────
+        if self.use_kinematic_model:
+            vel_norm = action[X]
+            omega    = action[Y]
+            vel[X]   = vel_norm * torch.cos(theta)
+            vel[Y]   = vel_norm * torch.sin(theta)
+        else:
+            omega = None            # no rotational component
 
-        next_pos = pos + vel * self.action_dt
+        # ── 2. Scale to the deployment arena ─────────────────────────────────────
+        vel[X] *= self.x_semidim / self.task_x_semidim
+        vel[Y] *= self.y_semidim / self.task_y_semidim
 
-        # Compute clamped velocity based on how far the agent can move without crossing bounds
-        below_min = next_pos < bounds_min
-        above_max = next_pos > bounds_max
+        # ── 3. Keep the next position inside the walls ───────────────────────────
+        bounds_min = torch.tensor(
+            [-self.x_semidim, -self.y_semidim], device=action.device
+        ) + self.agent_radius
+        bounds_max = torch.tensor(
+            [ self.x_semidim,  self.y_semidim], device=action.device
+        ) - self.agent_radius
 
-        # Adjust velocity where next position would violate bounds
+        next_pos   = pos + vel * self.action_dt
+        below_min  = next_pos < bounds_min
+        above_max  = next_pos > bounds_max
+
         vel[below_min] = (bounds_min[below_min] - pos[below_min]) / self.action_dt
         vel[above_max] = (bounds_max[above_max] - pos[above_max]) / self.action_dt
 
-        # Clamp to the agent's max velocity norm
-        clamped_vel = TorchUtils.clamp_with_norm(vel, agent.v_range)
-        return clamped_vel.tolist()
+        # ── 4. Respect the agent-speed envelope ──────────────────────────────────
+        vel = TorchUtils.clamp_with_norm(vel, agent.v_range)
+
+        return vel.tolist(), None if omega is None else omega.item()
+
+    def _wrap_to_pi(self, angle: float) -> float:
+        """Return the equivalent angle in the range [-π, π)."""
+        return (angle + math.pi) % (2 * math.pi) - math.pi
+
 
     def _issue_commands_to_agents(self, action_tensor):
         real_time_str = datetime.now().isoformat()
 
         for i, agent in enumerate(self.world.agents):
+            cmd_vel_xy, cmd_omega = self.clamp_velocity_to_bounds(action_tensor[i], agent)
+            vel_n, vel_e = convert_xy_to_ne(*cmd_vel_xy)
 
-            cmd_vel = self.clamp_velocity_to_bounds(action_tensor[i], agent)
-            vel_n, vel_e = convert_xy_to_ne(*cmd_vel)
+            # ── Heading reference ────────────────────────────────────────────────
+            if self.use_kinematic_model:
+                yaw_now = agent.state.rot.item()          # current estimate
+                yaw_ref = self._wrap_to_pi(yaw_now + cmd_omega * self.action_dt)
+            else:
+                yaw_ref   = math.pi / 2                   # legacy fixed heading
+                cmd_omega = 0.0
 
-            agent.reference_state.vn = vel_n
-            agent.reference_state.ve = vel_e
-            agent.reference_state.yaw = math.pi / 2
-            agent.reference_state.an = agent.a_range
-            agent.reference_state.ae = agent.a_range
-            agent.reference_state.header.stamp = self.get_clock().now().to_msg()
+            ref = agent.reference_state
+            ref.vn   = vel_n
+            ref.ve   = vel_e
+            ref.yaw  = yaw_ref
+            ref.an   = agent.a_range
+            ref.ae   = agent.a_range
+            ref.header.stamp = self.get_clock().now().to_msg()
 
+            # ── Console / CSV logging ────────────────────────────────────────────
             self.get_logger().info(
-                f"Robot {agent.robot_id} - Commanded velocity ne: {vel_n}, {vel_e} - "
-                f"pos: [{agent.state.pos[0,X]}, {agent.state.pos[0,Y]}] - "
-                f"vel: [{agent.state.vel[0,X]}, {agent.state.vel[0,Y]}]"
+                f"Robot {agent.robot_id} | v_ne=({vel_n:.3f}, {vel_e:.3f}) "
+                f"| ω={cmd_omega:.3f} | pos=({agent.state.pos[0,X]:.3f}, {agent.state.pos[0,Y]:.3f}) "
+                f"| yaw={agent.state.rot[0]:.3f}"
             )
 
             self.csv_writer.writerow([
                 agent.mytime, real_time_str, agent.robot_id,
-                agent.reference_state.vn, agent.reference_state.ve,
+                ref.vn, ref.ve,
                 agent.state.pos[0,X], agent.state.pos[0,Y],
-                agent.state.vel[0,X], agent.state.vel[0,Y]
+                agent.state.vel[0,X], agent.state.vel[0,Y],
             ])
             self.log_file.flush()
 
-            agent.pub.publish(agent.reference_state)
+            agent.pub.publish(ref)
             agent.mytime += self.action_dt
+
 
     def stop_all_agents(self):
         if getattr(self, "timer", None): self.timer.cancel()
