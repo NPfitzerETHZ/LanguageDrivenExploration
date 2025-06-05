@@ -4,7 +4,7 @@ defaults:
   - /experiment/experiment
   - /model/shared
   - /model/mlp_actor    # actor-network params
-  - /task/language_exploration
+  - /task/single_agent_unicycle_exploration
   - /algorithm/mappo
 
 device: cpu

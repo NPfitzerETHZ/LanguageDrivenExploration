@@ -191,9 +191,10 @@ class VmasModelsROSInterface(Node):
         self.y_semidim = grid_config.y_semidim
         
         # Task Config
-        load_scenario_config(config,self)
+        load_scenario_config(task_config,self)
         self._create_occupancy_grid()
         self.num_covered_targets = torch.zeros(1, dtype=torch.int, device=self.device)
+        self.max_target_count = torch.tensor([self.n_targets],dtype=torch.int, device=self.device)
 
         # History Config
         self.pos_dim = 2

@@ -36,7 +36,7 @@ def observation(agent, env):
     # === Validation ===
     assert hasattr(agent, "state") and hasattr(agent.state, "pos") and hasattr(agent.state, "vel") and hasattr(agent.state, "rot")
     assert hasattr(env, "x_semidim") and hasattr(env, "y_semidim") and hasattr(env, "device")
-    agent_id = int(agent.name.split("_")[-1])
+    #agent_id = int(agent.name.split("_")[-1])
 
     obs_components = []
     obs_dict = {}
