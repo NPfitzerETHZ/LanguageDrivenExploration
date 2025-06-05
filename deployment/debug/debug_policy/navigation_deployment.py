@@ -21,10 +21,20 @@ from vmas.simulator.utils import TorchUtils
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String, UInt8
-sys.path.insert(0, "/home/npfitzer/robomaster_ws/install/freyja_msgs/lib/python3.10/site-packages")
-from freyja_msgs.msg import ReferenceState
-from freyja_msgs.msg import CurrentState
-from freyja_msgs.msg import WaypointTarget
+
+USING_FREYJA = False;
+CREATE_MAP_FRAME = True;
+
+if USING_FREYJA:
+    sys.path.insert(0, "/home/npfitzer/robomaster_ws/install/freyja_msgs/lib/python3.10/site-packages")
+    from freyja_msgs.msg import ReferenceState
+    from freyja_msgs.msg import CurrentState
+    from freyja_msgs.msg import WaypointTarget
+else:
+    from geometry_msgs.msg import Twist, PoseStamped, Pose
+    from nav_msgs.msg import Odometry
+    from tf_transformations import euler_from_quaternion
+
 
 # Local Modules
 from deployment.helper_utils import convert_ne_to_xy, convert_xy_to_ne
@@ -68,8 +78,14 @@ class Agent:
         self.v_range = deployment_config.v_range
         self.device = device
         self.state_received = False
+        if CREATE_MAP_FRAME:
+            self.home_pn = None;
+            self.home_pe = None;
+        else:
+            self.home_pn = 0.0;
+            self.home_pe = 0.0;
+
         # State variables updated by current_state_callback
-        
         self.state = State(
             pos=[0.0, 0.0],
             vel=[0.0, 0.0],
@@ -81,27 +97,46 @@ class Agent:
         topic_prefix = getattr(deployment_config, "topic_prefix", "/robomaster_")
         
         # Create publisher for the robot
-        self.pub = self.node.create_publisher(
-            ReferenceState, 
-            f"{topic_prefix}{self.robot_id}/reference_state", 
-            1  
-        )
+        if USING_FREYJA:
+            self.pub = self.node.create_publisher(
+                ReferenceState,
+                f"{topic_prefix}{self.robot_id}/reference_state",
+                1
+            )
+        else:
+            self.pub = self.node.create_publisher(
+                Twist,
+                "/willow1/cmd_vel",
+                1
+            )
+
         
         # Create subscription with more descriptive variable name
-        self.state_subscription = self.node.create_subscription(
-            CurrentState, 
-            f"{topic_prefix}{self.robot_id}/current_state", 
-            self.current_state_callback, 
-            1
+        if USING_FREYJA:
+            self.state_subscription = self.node.create_subscription(
+                CurrentState,
+                f"{topic_prefix}{self.robot_id}/current_state",
+                self.freyja_current_state_callback,
+                1
+            )
+        else:
+            self.state_subscription = self.node.create_subscription(
+                Odometry,
+                "/willow/odometry/gps",
+                self.odom_current_state_callback,
+                1
         )
         
         # Log the subscription
         self.node.get_logger().info(f"Robot {self.robot_id} subscribing to: {topic_prefix}{self.robot_id}/current_state")
     
         # Create reference state message
-        self.reference_state = ReferenceState()
+        if USING_FREYJA:
+            self.reference_state = ReferenceState()
+        else:
+            self.reference_state = Twist()
 
-    def current_state_callback(self, msg: CurrentState):
+    def freyja_current_state_callback(self, msg: CurrentState):
         # Extract current state values from the state vector
         current_pos_n = msg.state_vector[0]
         current_pos_e = msg.state_vector[1]
@@ -113,7 +148,29 @@ class Agent:
         self.state.vel[0,X], self.state.vel[0,Y] = convert_ne_to_xy(current_vel_n, current_vel_e)
         self.state.rot[0] = current_rot
         
-        
+        self.state_received = True
+
+    def odom_current_state_callback(self, msg: Odometry):
+        # Extract current state values from the state vector
+        euler = euler_from_quaternion([msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z, msg.pose.pose.orientation.w]);
+
+        current_pos_n = msg.pose.pose.position.x;
+        current_pos_e = msg.pose.pose.position.y;
+        current_vel_n = msg.twist.twist.linear.x;
+        current_vel_e = msg.twist.twist.linear.y;
+
+        if CREATE_MAP_FRAME and self.home_pe is None:
+            self.home_pn = current_pos_n;
+            self.home_pe = current_pos_e;
+
+        current_pos_n = (current_pos_n - self.home_pn);
+        current_pos_e = (current_pos_e - self.home_pe);
+        print(f"Robot {self.robot_id} - Euler[2]: {euler[2]:.4f}, pos_n: {current_pos_n:.4f}, pos_e: {current_pos_e:.4f}")
+
+        self.state.pos[0,X], self.state.pos[0,Y] = convert_ne_to_xy(current_pos_n, current_pos_e)
+        self.state.vel[0,X], self.state.vel[0,Y] = convert_ne_to_xy(current_vel_n, current_vel_e)
+        self.state.rot[0] = euler[2];
+
         self.state_received = True
     
     def collect_observation(self):
@@ -134,9 +191,14 @@ class Agent:
         
     def send_zero_velocity(self):
         # Send a zero velocity command
-        self.reference_state.vn = 0.0
-        self.reference_state.ve = 0.0
-        self.reference_state.header.stamp = self.node.get_clock().now().to_msg()
+        if USING_FREYJA:
+            self.reference_state.vn = 0.0
+            self.reference_state.ve = 0.0
+            self.reference_state.header.stamp = self.node.get_clock().now().to_msg()
+        else:
+            self.reference_state.linear.x = 0.0
+            self.reference_state.angular.z = 0.0
+
         self.node.get_logger().info(f"Robot {self.robot_id} - Zero velocity command sent.")
         self.pub.publish(self.reference_state)
         self.node.log_file.flush()
@@ -171,8 +233,8 @@ class VmasModelsROSInterface(Node):
         # Setup logging to CSV in runtime dir
         self.log_file = open(log_dir / "vmas_log.csv", "w", newline='')
         self.csv_writer = csv.writer(self.log_file)
-        self.csv_writer.writerow(["experiment_time", "real_time", "robot_id", "cmd_vel_n", "cmd_vel_e", 
-                                  "pos_n", "pos_e", "vel_n", "vel_e"])
+        self.csv_writer.writerow(["experiment_time", "real_time", "robot_id", "cmd_vel", "cmd_omega", "cmd_vel_n", "cmd_vel_e",
+                                  "cur_pos_n", "cur_pos_e", "cur_vel_n", "cur_vel_e"])
 
         # Create Agents
         agents: List[Agent] = []
@@ -307,12 +369,16 @@ class VmasModelsROSInterface(Node):
             yaw_now   = agent.state.rot.item()                      # current estimate from localisation
             yaw_ref   = self._wrap_to_pi(yaw_now + cmd_omega * self.action_dt)
 
-            agent.reference_state.vn = vel_n
-            agent.reference_state.ve = vel_e
-            agent.reference_state.yaw = yaw_ref
-            agent.reference_state.an = agent.a_range
-            agent.reference_state.ae = agent.a_range
-            agent.reference_state.header.stamp = self.get_clock().now().to_msg()
+            if USING_FREYJA:
+                agent.reference_state.vn = vel_n
+                agent.reference_state.ve = vel_e
+                agent.reference_state.yaw = yaw_ref
+                agent.reference_state.an = agent.a_range
+                agent.reference_state.ae = agent.a_range
+                agent.reference_state.header.stamp = self.get_clock().now().to_msg()
+            else:
+                agent.reference_state.linear.x = math.sqrt(vel_n**2 + vel_e**2);
+                agent.reference_state.angular.z = cmd_omega;
 
             self.get_logger().info(
                 f"Robot {agent.robot_id} - Commanded velocity ne: {vel_n}, {vel_e} - "
@@ -324,7 +390,7 @@ class VmasModelsROSInterface(Node):
 
             self.csv_writer.writerow([
                 agent.mytime, real_time_str, agent.robot_id,
-                agent.reference_state.vn, agent.reference_state.ve,
+                cmd_vel, cmd_omega, vel_n, vel_e,
                 agent.state.pos[0,X], agent.state.pos[0,Y],
                 agent.state.vel[0,X], agent.state.vel[0,Y]
             ])
