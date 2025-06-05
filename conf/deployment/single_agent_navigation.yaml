@@ -15,7 +15,7 @@ seed: 1
 deployment:
   a_range: 1.0
   v_range: 1.0
-  id_list: [3]
+  id_list: [5]
   max_steps: 200
   use_gnn: true
   action_dt: 0.1
