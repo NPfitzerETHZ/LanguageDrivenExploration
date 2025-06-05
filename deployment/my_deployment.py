@@ -184,17 +184,19 @@ class VmasModelsROSInterface(Node):
         task_config = config["task"].params
         self.llm = SentenceTransformer(deployment_config.llm_model, device="cpu")
         self.use_speech_to_text = use_speech_to_text
+        
+        # Task Config
+        self.task_x_semidim = task_config.x_semidim
+        self.task_y_semidim = task_config.y_semidim
+        load_scenario_config(task_config,self)
+        self._create_occupancy_grid()
+        self.num_covered_targets = torch.zeros(1, dtype=torch.int, device=self.device)
+        self.max_target_count = torch.tensor([self.n_targets],dtype=torch.int, device=self.device)
 
         # Grid Config
         grid_config = config["grid_config"]
         self.x_semidim = grid_config.x_semidim
         self.y_semidim = grid_config.y_semidim
-        
-        # Task Config
-        load_scenario_config(task_config,self)
-        self._create_occupancy_grid()
-        self.num_covered_targets = torch.zeros(1, dtype=torch.int, device=self.device)
-        self.max_target_count = torch.tensor([self.n_targets],dtype=torch.int, device=self.device)
 
         # History Config
         self.pos_dim = 2
@@ -265,12 +267,12 @@ class VmasModelsROSInterface(Node):
             self._handle_termination()
             return
 
-        obs_list, pos_list, vel_list = self._collect_observations()
-        if not obs_list:
+        obs_dict = self._collect_observations()
+        if not obs_dict:
             self.get_logger().warn("No valid observations collected. Skipping this timestep.")
             return
 
-        input_td = self._prepare_input_tensor(obs_list, pos_list, vel_list)
+        input_td = self._prepare_input_tensor(obs_dict)
 
         with torch.no_grad(), set_exploration_type(ExplorationType.DETERMINISTIC):
             output_td = self.policy(input_td)
@@ -332,7 +334,7 @@ class VmasModelsROSInterface(Node):
         """
         pos   = agent.state.pos[0]              # shape (2,)
         theta = agent.state.rot[0]              # shape (1,)
-        vel   = action.clone()
+        vel   = action.clone() 
 
         # ── 1. Interpret the raw action ──────────────────────────────────────────
         if self.use_kinematic_model:
@@ -398,8 +400,8 @@ class VmasModelsROSInterface(Node):
             # ── Console / CSV logging ────────────────────────────────────────────
             self.get_logger().info(
                 f"Robot {agent.robot_id} | v_ne=({vel_n:.3f}, {vel_e:.3f}) "
-                f"| ω={cmd_omega:.3f} | pos=({agent.state.pos[0,X]:.3f}, {agent.state.pos[0,Y]:.3f}) "
-                f"| yaw={agent.state.rot[0]:.3f}"
+                f"| ω={cmd_omega:.3f} | pos=({agent.state.pos[0,X].item():.3f}, {agent.state.pos[0,Y].item():.3f}) "
+                f"| yaw={agent.state.rot[0].item():.3f}"
             )
 
             self.csv_writer.writerow([
