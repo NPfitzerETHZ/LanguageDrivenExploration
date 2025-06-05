@@ -105,12 +105,14 @@ class Agent:
         # Extract current state values from the state vector
         current_pos_n = msg.state_vector[0]
         current_pos_e = msg.state_vector[1]
+        current_rot = msg.state_vector[5]
         current_vel_n = msg.state_vector[3]
         current_vel_e = msg.state_vector[4]
         
         self.state.pos[0,X], self.state.pos[0,Y] = convert_ne_to_xy(current_pos_n, current_pos_e)
         self.state.vel[0,X], self.state.vel[0,Y] = convert_ne_to_xy(current_vel_n, current_vel_e)
-        self.state.rot[0] = msg.state_vector[5]
+        self.state.rot[0] = current_rot
+        
         
         self.state_received = True
     
@@ -260,9 +262,11 @@ class VmasModelsROSInterface(Node):
         accounting for the agent's radius and timestep.
         """
         pos = agent.state.pos[0]  # shape: (2,)
+        theta = agent.state.rot[0]  # shape: (1,)
         vel = action.clone()
-        vel_norm = action[0]
-        theta = action[1]  
+        
+        vel_norm = action[X]
+        omega = action[Y]  
         
         vel[X] = vel_norm * torch.cos(theta)
         vel[Y] = vel_norm * torch.sin(theta)
@@ -286,19 +290,19 @@ class VmasModelsROSInterface(Node):
 
         # Clamp to the agent's max velocity norm
         clamped_vel = TorchUtils.clamp_with_norm(vel, agent.v_range)
-        return clamped_vel.tolist(), theta.item()
+        return clamped_vel.tolist(), omega.item()
 
     def _issue_commands_to_agents(self, action_tensor):
         real_time_str = datetime.now().isoformat()
 
         for i, agent in enumerate(self.world.agents):
 
-            cmd_vel, theta = self.clamp_velocity_to_bounds(action_tensor[i], agent)
+            cmd_vel, cmd_omega = self.clamp_velocity_to_bounds(action_tensor[i], agent)
             vel_n, vel_e = convert_xy_to_ne(*cmd_vel)
 
             agent.reference_state.vn = vel_n
             agent.reference_state.ve = vel_e
-            agent.reference_state.yaw = theta
+            agent.reference_state.yrate = cmd_omega
             agent.reference_state.an = agent.a_range
             agent.reference_state.ae = agent.a_range
             agent.reference_state.header.stamp = self.get_clock().now().to_msg()
