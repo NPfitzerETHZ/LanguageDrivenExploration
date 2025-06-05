@@ -45,8 +45,8 @@ def observation(agent, env):
     pos = agent.state.pos
     vel = agent.state.vel
     rot = agent.state.rot
-    pos_norm = 1 / env.agent_radius * pos / torch.tensor([env.x_semidim, env.y_semidim], device=env.device)
-    vel_norm = 1 / env.agent_radius * vel / torch.tensor([env.x_semidim, env.y_semidim], device=env.device)
+    pos_norm = pos / torch.tensor([env.x_semidim, env.y_semidim], device=env.device)
+    vel_norm = vel / torch.tensor([env.x_semidim, env.y_semidim], device=env.device)
         
     # === LLM sentence embedding ===
     if env.llm_activate:

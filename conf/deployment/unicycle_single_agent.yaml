@@ -17,10 +17,8 @@ deployment:
   v_range: 1.0
   id_list: [3]
   max_steps: 200
-  use_gnn: true
   action_dt: 0.1
   obs_dt: 0.05
-  log_csv: true
   llm_model: "thenlper/gte-large"
 
 grid_config:

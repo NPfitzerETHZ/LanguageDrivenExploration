@@ -1,0 +1,94 @@
+
+name: SAMPLING                          # maps to VmasTask.SAMPLING
+scenario_class: scenarios.centralized.multi_agent_llm_exploration.MyLanguageScenario
+
+params:
+  # === Map & Scenario Layout ===
+  x_semidim: 3.0
+  y_semidim: 3.0
+  covering_range: 0.15
+  agent_radius: 0.17
+  n_obstacles: 0
+
+  # === Agent/Target Counts & Behavior ===
+  n_agents: 3
+  agents_per_target: 1
+  n_targets_per_class: 4
+  n_target_classes: 1
+  n_targets: 4
+  done_at_termination: true
+
+  # === Rewards ===
+  reward_scale_factor: 0.1
+  shared_target_reward: true
+  shared_final_reward: true
+  agent_collision_penalty: -0.75
+  obstacle_collision_penalty: -0.5
+  covering_rew_coeff: 7.0
+  false_covering_penalty_coeff: -0.25
+  time_penalty: -0.05
+  terminal_rew_coeff: 15.0
+  exponential_search_rew_coeff: 1.5
+  termination_penalty_coeff: -5.0
+
+  # === Exploration Rewards ===
+  use_expo_search_rew: true
+  grid_visit_threshold: 2
+  exploration_rew_coeff: -0.05
+  new_cell_rew_coeff: 0.05
+  heading_exploration_rew_coeff: 30
+
+  # === Lidar & Sensing ===
+  use_lidar: false
+  n_lidar_rays_entities: 8
+  n_lidar_rays_agents: 12
+  max_agent_observation_radius: 0.3
+  prediction_horizon_steps: 1
+
+  # === Agent Communication & GNNs ===
+  use_gnn: ${model.model_shared.use_gnn}
+  use_conv_2d: ${model.model_shared.use_conv_2d}
+  comm_dim: 0
+  comms_radius: ${model.model_shared.comms_radius}
+
+  # === Observation Settings ===
+  observe_grid: true
+  observe_targets: true
+  observe_agents: true
+  observe_pos_history: false
+  observe_vel_history: false
+  use_grid_data: true
+  use_class_data: false
+  use_max_targets_data: false
+  use_confidence_data: false
+
+  # === Grid Settings ===
+  num_grid_cells: 225
+  mini_grid_radius: 1
+
+  # === Movement & Dynamics ===
+  use_velocity_controller: true
+  use_kinematic_model: true
+  agent_weight: 1.0
+  agent_v_range: 1.0
+  agent_a_range: 1.0
+  min_collision_distance: 0.05
+  linear_friction: 0.1
+
+  # === Histories ===
+  history_length: 0
+
+  # === Language & LLM Goals ===
+  embedding_size: 1024
+  llm_activate: true
+
+  # === External Inputs ===
+  data_json_path: data/language_data_complete_multi_target_color_scale.json
+  decoder_model_path: decoders/llm0_decoder_model_grid_single_target_color.pth
+  use_decoder: false
+
+  # === Visuals ===
+  viewer_zoom: 1
+
+  # === Additional Scenario ===
+  max_steps: 250

@@ -256,6 +256,7 @@ class VmasModelsROSInterface(Node):
         self._covering_range = self.occupancy_grid.cell_radius
     
     def timer_callback(self):
+        
         if not self._all_states_received():
             self.get_logger().info("Waiting for all agents to receive state.")
             return
@@ -295,35 +296,26 @@ class VmasModelsROSInterface(Node):
             self.prompt_for_new_instruction()
 
     def _collect_observations(self):
-        obs_list, pos_list, vel_list = [], [], []
+        data_dict = {}  # key -> list of tensors
 
         for agent in self.world.agents:
             if not agent.state_buffer:
                 self.get_logger().warn(f"No state in buffer for agent {agent.robot_id}")
                 return
+
             latest_state = agent.state_buffer.pop()
-            if self.use_gnn:
-                obs_list.append(latest_state["obs"].float())
-                pos_list.append(latest_state["pos"].float())
-                vel_list.append(latest_state["vel"].float())
-            else:
-                obs_list.append(latest_state.float())
+            for key, value in latest_state.items():
+                data_dict.setdefault(key, []).append(value.float())
 
-        return obs_list, pos_list, vel_list
+        return data_dict
 
-    def _prepare_input_tensor(self, obs_list, pos_list, vel_list):
-        obs_tensor = torch.cat(obs_list, dim=0)
+    def _prepare_input_tensor(self, data_dict):
+        obs_dict = {
+            ("agents", "observation", key): torch.cat(tensor_list, dim=0)
+            for key, tensor_list in data_dict.items()
+        }
 
-        if self.use_gnn:
-            return TensorDict({
-                ("agents", "observation", "obs"): obs_tensor,
-                ("agents", "observation", "pos"): torch.cat(pos_list, dim=0),
-                ("agents", "observation", "vel"): torch.cat(vel_list, dim=0),
-            }, batch_size=[len(obs_list)])
-        else:
-            return TensorDict({
-                ("agents", "observation"): obs_tensor,
-            }, batch_size=[len(obs_list)])
+        return TensorDict(obs_dict, batch_size=[len(next(iter(data_dict.values())))])
 
     def clamp_velocity_to_bounds(self, action: torch.Tensor, agent):
         """

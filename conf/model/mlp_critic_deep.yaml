@@ -1,0 +1,11 @@
+critic_model:
+  _target_: benchmarl.models.mlp.MlpConfig
+  num_cells:
+  - 256
+  - 256
+  - 256
+  layer_class: torch.nn.modules.linear.Linear
+  activation_class: torch.nn.modules.activation.ReLU
+  activation_kwargs: null
+  norm_class: null
+  norm_kwargs: null
