@@ -306,7 +306,7 @@ class VmasModelsROSInterface(Node):
                 latest_state["pos"],
                 latest_state["rot"],
                 latest_state["vel"],
-                latest_state["obs"],], dim=-1).float()   # shape (1, 6)
+                latest_state["obs"],], dim=-1).float()   # shape (1, 7)
             obs_list.append(feat)
 
         return obs_list

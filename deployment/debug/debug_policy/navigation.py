@@ -275,7 +275,7 @@ class NavScenario(BaseScenario):
                     agent.state.pos - agent.goal.state.pos,
                     dim=-1,
                 )
-                < agent.shape.radius
+                < 0 #agent.shape.radius
                 for agent in self.world.agents
             ],
             dim=-1,

@@ -298,7 +298,7 @@ class VmasModelsROSInterface(Node):
             self.prompt_for_new_instruction()
 
     def _collect_observations(self):
-        data_dict = {}  # key -> list of tensors
+        data_dict = {} 
 
         for agent in self.world.agents:
             if not agent.state_buffer:
