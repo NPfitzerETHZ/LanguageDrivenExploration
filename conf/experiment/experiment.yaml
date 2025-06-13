@@ -11,7 +11,7 @@ prefer_continuous_actions: True
 collect_with_grad: False
 parallel_collection: False
 
-gamma: 0.99
+gamma: 0.995
 lr: 0.00005
 adam_eps: 0.000001
 clip_grad_norm: True

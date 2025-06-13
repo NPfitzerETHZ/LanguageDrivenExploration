@@ -58,12 +58,14 @@ PARAMS = [
 
     # --- Histories ----------------------------------------------------------
     ("history_length", 2),
+    ("max_steps", 250),
 
     # --- Language / LLM -----------------------------------------------------
-    ("embedding_size", 1024), ("llm_activate", True),
+    ("embedding_size", 1024), ("use_embedding_ratio", 1.0), ("llm_activate", True),
 
     # --- External paths -----------------------------------------------------
     ("data_json_path", ""), ("decoder_model_path", ""), ("use_decoder", False),
+    
 ]
 
 # Expand every entry to canonical (dest, key, default) form

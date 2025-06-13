@@ -10,9 +10,13 @@ from pathlib import Path
 from typing import List
 
 LARGE = 10
-DECODER_OUTPUT_SIZE = 25
+DECODER_OUTPUT_SIZE = 100
 CONFIDENCE_HIGH = 0.
 CONFIDENCE_LOW = 2.
+
+MINI_GRID_RADIUS = 1
+DATA_GRID_SHAPE = (10,10)
+DATA_GRID_NUM_TARGET_PATCHES = 1
 
 train_dict = None
 total_dict_size = None
@@ -24,18 +28,13 @@ class Decoder(nn.Module):
         super().__init__()
         self.norm_input = nn.LayerNorm(emb_size)
         self.l0 = nn.Linear(emb_size, hidden_size)
-        self.l1 = nn.Linear(hidden_size, hidden_size)
-        self.l2 = nn.Linear(hidden_size, out_size)
-        self.norm_hidden = nn.LayerNorm(hidden_size)
-        self.act = nn.LeakyReLU(0.1)
+        self.l1 = nn.Linear(hidden_size, out_size)
+        self.act = nn.ReLU()
         self.dropout = nn.Dropout(0.3)
 
     def forward(self, x):
-        x = self.norm_input(x)
-        x = self.dropout(self.act(self.l0(x)))
-        x = self.norm_hidden(x)
-        x = self.dropout(self.act(self.l1(x)))
-        return torch.tanh(self.l2(x))
+        x = self.act(self.l0(x))
+        return torch.tanh(self.l1(x))
 
 def load_decoder(model_path, embedding_size, device):
     
@@ -75,12 +74,14 @@ def load_task_data(
             sentences = [entry["gemini_response"] for entry in dataset]
             output["sentence"] = sentences
 
-        if all("grid" in entry for entry in dataset) and not use_decoder and use_grid_data:
+        if all("grid" in entry for entry in dataset) and use_grid_data:
             grids = [[*entry["grid"]] for entry in dataset]
             output["grid"] = torch.tensor(grids, dtype=torch.float32, device=device)
-        else:
+        elif use_decoder:
             grids = [decoder_model(torch.tensor(entry["embedding"],device=device)) for entry in dataset]
             output["grid"] = torch.stack(grids)
+        else:
+            grids = [[0.0] * DATA_GRID_SHAPE[0] * DATA_GRID_SHAPE[1]  for _ in dataset]
 
         if all("class" in entry for entry in dataset) and use_class_data:
             classes = [entry["class"] for entry in dataset]
@@ -105,10 +106,6 @@ def load_task_data(
     train_dict = process_dataset(data)
     total_dict_size = next(iter(train_dict.values())).shape[0]
     
-
-MINI_GRID_RADIUS = 1
-DATA_GRID_SHAPE = (10,10)
-DATA_GRID_NUM_TARGET_PATCHES = 1
 
 def apply_density_diffusion(grid, kernel_size=3, sigma=1.0):
     # Create a Gaussian kernel for diffusion
@@ -137,7 +134,7 @@ def apply_density_diffusion(grid, kernel_size=3, sigma=1.0):
 
 class WorldOccupancyGrid(CoreOccupancyGrid):
     
-    def __init__(self, x_dim, y_dim, x_scale, y_scale, num_cells, batch_size, num_targets, num_targets_per_class, visit_threshold, embedding_size, world_grid=True, device='cpu'):
+    def __init__(self, x_dim, y_dim, x_scale, y_scale, num_cells, batch_size, num_targets, num_targets_per_class, visit_threshold, embedding_size, use_embedding_ratio, world_grid=True, device='cpu'):
         super().__init__(x_dim, y_dim, x_scale, y_scale, num_cells, visit_threshold, batch_size, num_targets, embedding_size, device)
 
         self.world_grid = world_grid
@@ -159,7 +156,24 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
     
     def sample_dataset(self,env_index, packet_size, target_class, max_target_count, confidence_level):
         
-        sample_indices = torch.randperm(total_dict_size)[:packet_size]
+        # --- pick indices ------------------------------------------------------------
+        total_dict_size = len(train_dict["sentence"])          # or any key with same length
+
+        if packet_size <= total_dict_size:
+            # Normal case: sample *without* replacement
+            sample_indices = torch.randperm(total_dict_size, device=self.device)[:packet_size]
+        else:
+            # Need repeats → build “base” + “extra” indices
+            repeats, remainder = divmod(packet_size, total_dict_size)
+
+            # 1) repeat every index the same number of times
+            base = torch.arange(total_dict_size, device=self.device).repeat(repeats)
+
+            # 2) top-up with a random subset for the leftover slots
+            extra = torch.randperm(total_dict_size, device=self.device)[:remainder] \
+                    if remainder > 0 else torch.empty(0, dtype=torch.long, device=self.device)
+
+            sample_indices = torch.cat([base, extra])
         
         # Sample tensors
         task_dict = {key: value[sample_indices] for key, value in train_dict.items() if key in train_dict and key != "sentence"}
@@ -241,7 +255,7 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
 
         # probability of falling back to a uniform pick
         p_uniform = (CONFIDENCE_HIGH - confidence_level.squeeze(1).float()) \
-                    / (CONFIDENCE_HIGH - CONFIDENCE_LOW) * 0.5      # 50 % @ LOW → 0 % @ HIGH
+                    / (CONFIDENCE_HIGH - CONFIDENCE_LOW) * 0.7      # 50 % @ LOW → 0 % @ HIGH
 
         rand_u      = torch.rand(packet_size, device=flat_grid.device)
         do_uniform  = (rand_u < p_uniform) | (num_valid == 0)
@@ -389,7 +403,7 @@ class WorldOccupancyGrid(CoreOccupancyGrid):
                 self.sample_dataset(env_index, packet_size, target_class, max_target_count, confidence_level)
         else: # Case that we are not using the embedding for robustness
             max_target_count[env_index] = num_targets_per_class
-            target_class[env_index] = torch.randint(0, num_target_groups, (packet_size,1), dtype=torch.int, device=self.device)
+            target_class[env_index] = torch.zeros((packet_size,1), dtype=torch.int, device=self.device)
             # Embedding is already zero
             # Sentence is already [""]
         

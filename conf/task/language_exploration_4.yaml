@@ -4,25 +4,25 @@ scenario_class: scenarios.centralized.multi_agent_llm_exploration.MyLanguageScen
 
 params:
   # === Map & Scenario Layout ===
-  x_semidim: 3.0
-  y_semidim: 3.0
+  x_semidim: 1.0
+  y_semidim: 1.0
   covering_range: 0.15
-  agent_radius: 0.17
+  agent_radius: 0.03
   n_obstacles: 0
 
   # === Agent/Target Counts & Behavior ===
-  n_agents: 1
+  n_agents: 3
   agents_per_target: 1
-  n_targets_per_class: 4
+  n_targets_per_class: 8
   n_target_classes: 1
-  n_targets: 4
+  n_targets: 8
   done_at_termination: true
 
   # === Rewards ===
   reward_scale_factor: 0.1
   shared_target_reward: true
   shared_final_reward: true
-  agent_collision_penalty: -0.5
+  agent_collision_penalty: 0.0
   obstacle_collision_penalty: -0.5
   covering_rew_coeff: 7.0
   false_covering_penalty_coeff: -0.25
@@ -35,7 +35,7 @@ params:
   use_expo_search_rew: true
   grid_visit_threshold: 2
   exploration_rew_coeff: -0.05
-  new_cell_rew_coeff: 0.05
+  new_cell_rew_coeff: 0.00
   heading_exploration_rew_coeff: 30
 
   # === Lidar & Sensing ===
@@ -63,14 +63,14 @@ params:
   use_confidence_data: false
 
   # === Grid Settings ===
-  num_grid_cells: 225
+  num_grid_cells: 2025
   mini_grid_radius: 1
 
   # === Movement & Dynamics ===
-  use_velocity_controller: true
-  use_kinematic_model: true
+  use_velocity_controller: false
+  use_kinematic_model: false
   agent_weight: 1.0
-  agent_v_range: 1.0
+  agent_v_range: 0.25
   agent_a_range: 1.0
   min_collision_distance: 0.05
   linear_friction: 0.1
@@ -80,12 +80,13 @@ params:
 
   # === Language & LLM Goals ===
   embedding_size: 1024
+  use_embedding_ratio: 0.95
   llm_activate: true
 
   # === External Inputs ===
-  data_json_path: data/language_data_complete_multi_target_color_scale.json
-  decoder_model_path: decoders/llm0_decoder_model_grid_single_target_color.pth
-  use_decoder: false
+  data_json_path: data/language_data_complete_target_scale.json
+  decoder_model_path: decoders/llm0_decoder_model_grid_scale.pth
+  use_decoder: true
 
   # === Visuals ===
   viewer_zoom: 1

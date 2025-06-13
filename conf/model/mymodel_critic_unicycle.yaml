@@ -7,6 +7,7 @@ critic_model:
   # ─── Feature keys ────────────────────────────────────────────────────────────
   sentence_key: sentence_embedding
   position_key: pos
+  rotation_key: rot
   velocity_key: vel
   grid_key: grid_obs
   target_key: target_obs

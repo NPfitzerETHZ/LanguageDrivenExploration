@@ -7,6 +7,7 @@ from benchmarl.algorithms import MappoConfig
 from hydra.utils import instantiate
 from utils.utils import _load_class
 import importlib
+import copy
 
 def _patch_env_creator(scenario_cls_path: str):
     """Monkey-patch VmasTask.get_env_fun so we can pass a dotted class path."""
@@ -15,7 +16,7 @@ def _patch_env_creator(scenario_cls_path: str):
 
     def get_env_fun(self, num_envs, continuous_actions, seed, device):
         # clone the config dict to avoid side-effects
-        cfg = dict(self.config)
+        cfg = dict(copy.deepcopy(self.config))
         return lambda: VmasEnv(
             scenario=ScenarioCls(),  # instantiate custom scenario
             num_envs=num_envs,
@@ -32,6 +33,7 @@ def _patch_env_creator(scenario_cls_path: str):
 def benchmarl_setup_experiment(cfg: DictConfig) -> Experiment:
     # ---------- TASK ----------
     task_enum = VmasTask[cfg.task.name]
+    task_enum.config = None
     task = task_enum.get_from_yaml()
     task.config = cfg.task.params
 
@@ -63,10 +65,23 @@ def benchmarl_setup_experiment(cfg: DictConfig) -> Experiment:
     # ---------- RETURN EXPERIMENT ----------
     if cfg.experiment.get("restore_file", None) is not None:
         # restoring: use only actor model
+        # return Experiment(
+        #     task=task,
+        #     algorithm_config=algorithm_config,
+        #     model_config=actor_model,
+        #     seed=cfg.seed,
+        #     config=exp_cfg,
+        # )
+        # training from scratch: use both actor and critic
+        critic_model = instantiate(cfg.model.critic_model)
+        critic_model.activation_class = _load_class(critic_model.activation_class)
+        critic_model.layer_class = _load_class(critic_model.layer_class)
+
         return Experiment(
             task=task,
             algorithm_config=algorithm_config,
             model_config=actor_model,
+            critic_model_config=critic_model,
             seed=cfg.seed,
             config=exp_cfg,
         )

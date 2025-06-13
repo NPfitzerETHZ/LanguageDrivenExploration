@@ -122,11 +122,11 @@ class MyModel(Model):
         
         
         #==== Setup GNN ====#
-        if use_gnn:
+        if self.use_gnn:
             if self.pos_features > 0:
                 self.pos_features += 1  # We will add also 1-dimensional distance
             self.edge_features = self.pos_features + self.vel_features
-            self.input_features = conv_out_channel_dim ** 2
+            self.input_features = 2 * conv_out_channel_dim ** 2 
             # Input keys
             if self.position_key is not None and not self.exclude_pos_from_node_features:
                 self.input_features += self.pos_features - 1
@@ -180,10 +180,10 @@ class MyModel(Model):
             )
         
         #==== Setup Policy MLP ====#
-        if use_gnn:
+        if self.use_gnn:
             self.input_features = (128 if self.use_sentence_encoder else self.input_spec[('agents', 'observation', self.sentence_key)].shape[-1]) + emb_dim + sum(
             [spec.shape[-1] for key, spec in self.input_spec.items(True, True)
-            if _unravel_key_to_tuple(key)[-1] in (target_key,'obs')]
+            if _unravel_key_to_tuple(key)[-1] in ('obs')]
             )
         else:
             self.input_features = sum(
@@ -221,9 +221,13 @@ class MyModel(Model):
 
     def _forward(self, tensordict: TensorDictBase) -> TensorDictBase:
         # Gather in_key
-        pos = tensordict.get(('agents','observation',self.position_key))
-        rot = tensordict.get(('agents','observation',self.rotation_key))
-        vel = tensordict.get(('agents','observation',self.velocity_key))
+        pos = rot = vel = None
+        if self.position_key is not None:
+            pos = tensordict.get(('agents','observation',self.position_key))
+        if self.rotation_key is not None:
+            rot = tensordict.get(('agents','observation',self.rotation_key))
+        if self.velocity_key is not None:    
+            vel = tensordict.get(('agents','observation',self.velocity_key))
         grid_visit = tensordict.get(('agents','observation',self.grid_key))
         sentence = tensordict.get(('agents','observation',self.sentence_key))
         grid_target = tensordict.get(('agents','observation',self.target_key))
@@ -235,7 +239,7 @@ class MyModel(Model):
             batch_grid = grid_visit.view(-1,1,G, G)
             grid_visit = self.conv_2d(batch_grid).mean(dim=(-3)).view(*grid_visit.shape[:-3], grid_visit.shape[-3], -1)
         
-        node_feat = [grid_visit]
+        node_feat = [grid_visit, grid_target]
         if pos is not None and not self.exclude_pos_from_node_features:
             node_feat.append(pos)
         if rot is not None:
@@ -302,7 +306,7 @@ class MyModel(Model):
             sentence = self.sentence_encoder(sentence)
         
         # Stack all inputs
-        x = torch.cat([x, obs, grid_target, sentence], dim=-1)
+        x = torch.cat([x, obs, sentence], dim=-1)
 
         # Has multi-agent input dimension
         if self.input_has_agent_dim:

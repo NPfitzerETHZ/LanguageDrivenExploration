@@ -141,6 +141,7 @@ class MyLanguageScenario(BaseScenario):
             num_targets_per_class=self.n_targets_per_class,
             visit_threshold=self.grid_visit_threshold,
             embedding_size=self.embedding_size,
+            use_embedding_ratio= self.use_embedding_ratio,
             device=self.device)
         self._covering_range = self.occupancy_grid.cell_radius + self.agent_radius
 
@@ -186,6 +187,7 @@ class MyLanguageScenario(BaseScenario):
             self.target_colors[target_class_idx] = torch.tensor(rgb, device=self.device)
         
         self.step_count = 0
+        self.team_spread = torch.zeros((batch_dim,self.max_steps), device=self.device)
         
         # Coverage action
         self.coverage_action = {}
@@ -200,6 +202,8 @@ class MyLanguageScenario(BaseScenario):
         """Reset the world for a given environment index."""
 
         if env_index is None: # Apply to all environements
+            
+            self.team_spread.zero_()
 
             self.all_time_covered_targets = torch.full(
                 (self.world.batch_dim, self.n_target_classes, self.n_targets_per_class), False, device=self.world.device
@@ -223,6 +227,8 @@ class MyLanguageScenario(BaseScenario):
                     agent.velocity_history.reset_all()
 
         else:
+            self.team_spread[env_index].zero_()
+            
             self.all_time_covered_targets[env_index] = False
             self.targets_pos[env_index].zero_()
 
@@ -333,7 +339,25 @@ class MyLanguageScenario(BaseScenario):
 
         if self.use_velocity_controller and not self.use_kinematic_model:
             agent.controller.process_force()
+    
+    def post_step(self):
+
+        team_pos = torch.stack(
+            [agent.state.pos       
+            for agent in self.world.agents],
+            dim=1                       
+        )                       
+
+        centroid = team_pos.mean(dim=1)     
+
+        disp   = team_pos - centroid.unsqueeze(1) 
+        dist2  = (disp * disp).sum(dim=-1)        
+
+        var    = dist2.mean(dim=1)             
+        rms    = torch.sqrt(var)  
         
+        self.team_spread[:,(self.step_count-1) % self.max_steps] = rms                     
+
         
     def extra_render(self, env_index: int = 0) -> "List[Geom]":
         """Render additional visual elements."""

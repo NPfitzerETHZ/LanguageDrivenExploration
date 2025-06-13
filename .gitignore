@@ -26,3 +26,4 @@ data/
 decoders/
 checkpoints*
 outputs*
+plots*

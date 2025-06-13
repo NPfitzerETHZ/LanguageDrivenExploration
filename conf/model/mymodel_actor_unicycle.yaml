@@ -5,15 +5,17 @@ actor_model:
   # ─── GNN settings ────────────────────────────────────────────────────────────
   topology: from_pos
   edge_radius: ${..model_shared.comms_radius}   # ← relative path, one level up
-  self_loops: false
+  self_loops: true
   gnn_class: torch_geometric.nn.conv.GATv2Conv
   gnn_kwargs:
-    add_self_loops: true
+    add_self_loops: false
     residual: true
 
   # ─── Feature keys & sizes ────────────────────────────────────────────────────
   position_key: pos         # 2-D agent positions
   pos_features: 2
+  rotation_key: rot         # heading angle
+  rot_features: 1
   velocity_key: vel
   vel_features: 2
   sentence_key: sentence_embedding
