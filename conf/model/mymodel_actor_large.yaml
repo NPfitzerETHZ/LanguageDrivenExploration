@@ -28,6 +28,9 @@ actor_model:
 
   # ─── Toggles ─────────────────────────────────────────────────────────────────
   use_gnn: ${..model_shared.use_gnn}
-  use_sentence_encoder: false
   use_conv_2d: ${..model_shared.use_conv_2d}
-  emb_dim: 128
+  gnn_emb_dim: 128
+
+  cnn_emb_dim : 9
+  cnn_filters: 32
+  cnn_spatial: 3

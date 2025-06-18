@@ -17,15 +17,28 @@ def compute_reward(agent, env):
 
     if env.n_targets > 0:
         # TODO: Refactor this to support full decentralization
-        agent.num_covered_targets = env.all_time_covered_targets[
-            torch.arange(0, env.world.batch_dim, device=env.device),
-            env.target_class
-        ].sum(dim=-1)
+        
+        if env.use_team_level_target_count or not env.use_gnn:
+            agent.num_covered_targets = env.all_time_covered_targets[
+                torch.arange(0, env.world.batch_dim, device=env.device),
+                env.target_class
+            ].sum(dim=-1)
+        else:
+            agent.num_covered_targets = env.all_time_agent_covered_targets[
+                torch.arange(0, env.world.batch_dim, device=env.device),
+                env.target_class
+            ].sum(dim=-1)
 
     # === Exponential Reward ===
     if env.use_expo_search_rew:
+        
+        team_coverage = env.all_time_covered_targets[
+            torch.arange(0, env.world.batch_dim, device=env.device),
+            env.target_class
+        ].sum(dim=-1)
+        
         env.covering_rew_val = torch.exp(
-            env.exponential_search_rew * (agent.num_covered_targets + 1) / env.max_target_count
+            env.exponential_search_rew * (team_coverage + 1) / env.max_target_count
         ) + (env.covering_rew_coeff - 1)
 
     # === Initialize Reward Buffers ===
@@ -173,7 +186,7 @@ def compute_exploration_rewards(agent, pos, env):
                 env.coverage_action[agent.name]
             )
 
-    env.occupancy_grid.update(pos)
+    env.occupancy_grid.update(pos, env.mini_grid_radius)
 
 def compute_termination_rewards(agent, env):
     """

@@ -24,9 +24,8 @@ data_grid_size = None
 decoder_model = None
 
 class Decoder(nn.Module):
-    def __init__(self, emb_size, out_size, hidden_size=256):
+    def __init__(self, emb_size, out_size, hidden_size=128):
         super().__init__()
-        self.norm_input = nn.LayerNorm(emb_size)
         self.l0 = nn.Linear(emb_size, hidden_size)
         self.l1 = nn.Linear(hidden_size, out_size)
         self.act = nn.ReLU()
@@ -34,7 +33,7 @@ class Decoder(nn.Module):
 
     def forward(self, x):
         x = self.act(self.l0(x))
-        return torch.tanh(self.l1(x))
+        return torch.sigmoid(self.l1(x))
 
 def load_decoder(model_path, embedding_size, device):
     
@@ -78,8 +77,30 @@ def load_task_data(
             grids = [[*entry["grid"]] for entry in dataset]
             output["grid"] = torch.tensor(grids, dtype=torch.float32, device=device)
         elif use_decoder:
-            grids = [decoder_model(torch.tensor(entry["embedding"],device=device)) for entry in dataset]
-            output["grid"] = torch.stack(grids)
+            grids = [decoder_model(torch.tensor(entry["embedding"], device=device)) for entry in dataset]
+            grid_tensor = torch.stack(grids)  # shape: (batch_size, grid_dim^2)
+
+            # Step 1: Min-max normalize each sample individually
+            min_vals = grid_tensor.min(dim=1, keepdim=True).values
+            max_vals = grid_tensor.max(dim=1, keepdim=True).values
+            denom = max_vals - min_vals
+            normalized = torch.where(denom > 0, (grid_tensor - min_vals) / denom, torch.zeros_like(grid_tensor))
+
+            # Step 2: Apply fixed threshold (e.g., 0.8)
+            threshold = 0.8
+            above_thresh = normalized >= threshold
+
+            # Step 3: Subtract threshold only for values above it
+            rescaled = torch.zeros_like(normalized)
+            rescaled[above_thresh] = normalized[above_thresh] - threshold
+
+            # Step 4: Normalize remaining values to [0, 1] per sample
+            new_max_vals = rescaled.max(dim=1, keepdim=True).values
+            rescaled = torch.where(new_max_vals > 0, rescaled / new_max_vals, torch.zeros_like(rescaled))
+
+            output["grid"] = rescaled
+
+
         else:
             grids = [[0.0] * DATA_GRID_SHAPE[0] * DATA_GRID_SHAPE[1]  for _ in dataset]
 

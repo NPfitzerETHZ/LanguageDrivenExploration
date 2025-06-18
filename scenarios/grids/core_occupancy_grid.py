@@ -48,7 +48,8 @@ class CoreOccupancyGrid:
         self.grid_obstacles = torch.zeros((batch_size,self.padded_grid_height, self.padded_grid_width), device=self.device)
         self.grid_obstacles[:, self.border_mask] = OBSTACLE
         # grid targets
-        self.grid_targets = torch.zeros((batch_size,self.padded_grid_height, self.padded_grid_width), dtype=torch.int32, device=self.device)
+        self.grid_targets = torch.zeros((batch_size,self.padded_grid_height, self.padded_grid_width), dtype=torch.float, device=self.device)
+        self.grid_found_targets = torch.ones((batch_size,self.padded_grid_height, self.padded_grid_width), dtype=torch.float, device=self.device) * 0.5
         # visits
         self.grid_visits = torch.zeros((batch_size,self.padded_grid_height, self.padded_grid_width), device=self.device)
         self.grid_visits_sigmoid = torch.zeros((batch_size,self.padded_grid_height, self.padded_grid_width), device=self.device)
@@ -90,12 +91,19 @@ class CoreOccupancyGrid:
 
         return torch.stack((world_x, world_y), dim=-1)
         
-    def update(self, agent_positions: torch.Tensor):
+    def update(self, agent_positions: torch.Tensor, mini_grid_radius):
         """
-        Update the grid and visit count based on the agents' current positions.
+        Update the grid and visit count based on the agents' current positions and observations.
         """
         grid_x, grid_y = self.world_to_grid(agent_positions, padding=True)
         batch_indices = torch.arange(agent_positions.shape[0], device=agent_positions.device)  # Shape: (batch,)
+           
+        # Update internal grid with sensor data.
+        x_range , y_range = self.sample_mini_grid(agent_positions, mini_grid_radius)
+        mini_grid = self.grid_targets[torch.arange(agent_positions.shape[0]).unsqueeze(1).unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)]
+        self.grid_found_targets[torch.arange(agent_positions.shape[0]).unsqueeze(1).unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)] = mini_grid
+        self.grid_targets[batch_indices, grid_y, grid_x] = 0 # Zero out found targets
+        
         self.grid_visits[batch_indices, grid_y, grid_x] += 1
         self.grid_visits_sigmoid[batch_indices, grid_y, grid_x] = 1/(1+torch.exp(self.visit_threshold - self.grid_visits[batch_indices, grid_y, grid_x]))
 
@@ -146,6 +154,39 @@ class CoreOccupancyGrid:
         mini_grid = self.grid_targets[torch.arange(pos.shape[0]).unsqueeze(1).unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)]
 
         return mini_grid.flatten(start_dim=1, end_dim=-1) / TARGET
+    
+    def get_grid_found_targets_observation(self, pos, mini_grid_radius):
+
+        x_range , y_range = self.sample_mini_grid(pos, mini_grid_radius)
+        mini_grid = self.grid_found_targets[torch.arange(pos.shape[0]).unsqueeze(1).unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)]
+
+        return mini_grid.flatten(start_dim=1, end_dim=-1) / TARGET
+    
+    def get_grid_found_targets_observation_2d(self, pos, mini_grid_radius):
+
+        x_range , y_range = self.sample_mini_grid(pos, mini_grid_radius)
+        mini_grid = self.grid_found_targets[torch.arange(pos.shape[0]).unsqueeze(1).unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)]
+
+        return mini_grid / TARGET
+
+    def get_grid_observation_2d(self, pos, mini_grid_radius):
+        
+        x_range , y_range = self.sample_mini_grid(pos, mini_grid_radius)
+        
+        mini_grid_found_targets = self.grid_found_targets[torch.arange(pos.shape[0]).unsqueeze(1).unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)]
+        mini_grid_found_targets /= TARGET
+        
+        mini_grid_obstacles = self.grid_obstacles[torch.arange(pos.shape[0]).unsqueeze(1).unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)]
+        mini_grid_visited = self.grid_visits_sigmoid[torch.arange(pos.shape[0]).unsqueeze(1).unsqueeze(2), y_range.unsqueeze(2), x_range.unsqueeze(1)]
+        mask = torch.where(mini_grid_obstacles == 0)
+        mini_grid_visited[mask] = mini_grid_obstacles[mask] 
+        mini_grid_visited /= OBSTACLE
+        
+        mini_grid_stack = torch.stack([mini_grid_visited, mini_grid_found_targets], dim=1)
+        
+        return  mini_grid_stack
+        
+        
 
     def compute_exploration_bonus(self, agent_positions, exploration_rew_coeff = -0.02, new_cell_rew_coeff = 0.25):
         """
@@ -202,6 +243,7 @@ class CoreOccupancyGrid:
         self.grid_visits_sigmoid.zero_()
 
         self.grid_targets.zero_()
+        self.grid_found_targets.zero_()
     
         self.grid_obstacles.zero_()
         self.grid_obstacles[:,self.border_mask] = OBSTACLE
@@ -217,6 +259,7 @@ class CoreOccupancyGrid:
         self.grid_visits_sigmoid[env_index].zero_()
 
         self.grid_targets[env_index].zero_()
+        self.grid_found_targets[env_index].zero_()
 
         self.grid_obstacles[env_index].zero_()
         self.grid_obstacles[env_index,self.border_mask] = OBSTACLE

@@ -13,6 +13,8 @@ from torchrl.modules import MLP, MultiAgentMLP
 
 from tensordict.utils import _unravel_key_to_tuple, NestedKey
 from benchmarl.models.common import Model, ModelConfig
+import math, inspect, warnings, torch, torch.nn as nn
+from torch_geometric.nn import MessagePassing
 
 import importlib
 _has_torch_geometric = importlib.util.find_spec("torch_geometric") is not None
@@ -38,8 +40,7 @@ if _has_torch_geometric:
             else:
                 data.edge_attr = cart
             return data
-
-
+        
 
 class MyModel(Model):
     """Multi layer perceptron model.
@@ -73,28 +74,31 @@ class MyModel(Model):
         pos_features: Optional[int],
         rot_features: Optional[int],
         vel_features: Optional[int],
-        emb_dim: Optional[int],
+        gnn_emb_dim: Optional[int],
         use_gnn: bool,
-        use_sentence_encoder: bool,
         use_conv_2d: bool,
+        cnn_filters: Optional[int],
+        cnn_spatial: Optional[int],
+        cnn_emb_dim: Optional[int],
         **kwargs,
     ):
-        self.topology = topology
-        self.self_loops = self_loops
+        self.topology =     topology
+        self.self_loops =   self_loops
         self.position_key = position_key
         self.rotation_key = rotation_key
         self.velocity_key = velocity_key
         self.sentence_key = sentence_key
-        self.grid_key = grid_key
-        self.target_key = target_key
-        self.exclude_pos_from_node_features = exclude_pos_from_node_features
-        self.edge_radius = edge_radius
+        self.grid_key =     grid_key
+        self.target_key =   target_key
+        self.edge_radius =  edge_radius
         self.pos_features = pos_features
         self.vel_features = vel_features
-        self.use_gnn = use_gnn
-        self.use_sentence_encoder = use_sentence_encoder
-        self.use_conv_2d = use_conv_2d
-        self.emb_dim = emb_dim
+        self.rot_features = rot_features
+        self.use_gnn =      use_gnn
+        self.use_conv_2d =  use_conv_2d
+        self.gnn_emb_dim =  gnn_emb_dim
+        self.cnn_emb_dim =  cnn_emb_dim
+        self.exclude_pos_from_node_features = exclude_pos_from_node_features
                 
         super().__init__(
             input_spec=kwargs.pop("input_spec"),
@@ -109,95 +113,54 @@ class MyModel(Model):
             model_index=kwargs.pop("model_index"),
             is_critic=kwargs.pop("is_critic"),
         )
-        
-        conv_out_channel_dim = 3 if self.use_conv_2d else int(self.input_spec[('agents', 'observation', self.grid_key)].shape[-1]**(1/2))
-        
-        #==== Setup Conv layer ====#
-        if self.use_conv_2d:
-            G = self.input_spec[('agents', 'observation', self.grid_key)].shape[-1]
-            stride = G // conv_out_channel_dim
-            kernel_size = G - 2 * stride
-            padding = ((conv_out_channel_dim - 1) * stride + kernel_size - G) // 2
-            self.conv_2d =  nn.Conv2d(in_channels=1, out_channels=emb_dim, kernel_size=kernel_size, stride=stride, padding=padding).to(self.device)
-        
-        
-        #==== Setup GNN ====#
-        if self.use_gnn:
-            if self.pos_features > 0:
-                self.pos_features += 1  # We will add also 1-dimensional distance
-            self.edge_features = self.pos_features + self.vel_features
-            self.input_features = 2 * conv_out_channel_dim ** 2 
-            # Input keys
-            if self.position_key is not None and not self.exclude_pos_from_node_features:
-                self.input_features += self.pos_features - 1
-            if self.velocity_key is not None:
-                self.input_features += self.vel_features
-            if self.rotation_key is not None:
-                self.input_features += rot_features
 
+        G = self.input_spec[('agents', 'observation', self.grid_key)].shape[-1]
+        flat_grid = G * G
+
+        if use_conv_2d:
+            C =             cnn_filters
+            S =             cnn_spatial                           
+            stride =        G // S
+            kernel_size =   G - (S - 1) * stride            
+            padding =       ((S - 1) * stride + kernel_size - G) // 2
+            conv_flat =     C * S * S
+
+            self.conv_2d = nn.Conv2d(in_channels=2, out_channels=C,
+                                     kernel_size=kernel_size,
+                                     stride=stride, padding=padding).to(self.device)                   
+            self.linear_from_conv = nn.Linear(conv_flat, cnn_emb_dim).to(self.device)
+
+        else:                                   
+            self.cnn_emb_dim = flat_grid
+
+        if self.use_gnn:
+            
             if gnn_kwargs is None:
                 gnn_kwargs = {}
-            gnn_kwargs.update(
-                {"in_channels": self.input_features, "out_channels": self.emb_dim}
-            )
+                
+            gnn_kwargs.update({"in_channels": self._n_node_in(), "out_channels": self.gnn_emb_dim})
+            if self._edge_attr_dim() and "edge_dim" in inspect.signature(gnn_class).parameters:
+                gnn_kwargs["edge_dim"] = self._edge_attr_dim()
             self.gnn_supports_edge_attrs = (
                 "edge_dim" in inspect.getfullargspec(gnn_class).args
             )
-            if (
-                self.position_key is not None or self.velocity_key is not None
-            ) and not self.gnn_supports_edge_attrs:
-                warnings.warn(
-                    "Position key or velocity key provided but GNN class does not support edge attributes. "
-                    "These keys will not be used for computing edge features."
-                )
-            if (
-                position_key is not None or velocity_key is not None
-            ) and self.gnn_supports_edge_attrs:
-                gnn_kwargs.update({"edge_dim": self.edge_features})
-
-            self.gnns = nn.ModuleList(
-                [
-                    gnn_class(**gnn_kwargs).to(self.device)
-                    for _ in range(self.n_agents if not self.share_params else 1)
-                ]
-            )
+            
             self.edge_index = _get_edge_index(
                 topology=self.topology,
                 self_loops=self.self_loops,
                 device=self.device,
                 n_agents=self.n_agents,
             )
-        
-        #=== Setup sentence encoder ===#
-        if use_sentence_encoder:
-            self.sentence_encoder = MLP(
-                in_features=self.input_spec[('agents', 'observation', self.sentence_key)].shape[-1],
-                out_features=128,
-                device=self.device,
-                num_cells=[256,256],
-                activation_class=kwargs.get('activation_class', nn.ReLU),
-                layer_class=kwargs.get('layer_class', nn.Linear)
-            )
-        
-        #==== Setup Policy MLP ====#
-        if self.use_gnn:
-            self.input_features = (128 if self.use_sentence_encoder else self.input_spec[('agents', 'observation', self.sentence_key)].shape[-1]) + emb_dim + sum(
-            [spec.shape[-1] for key, spec in self.input_spec.items(True, True)
-            if _unravel_key_to_tuple(key)[-1] in ('obs')]
-            )
-        else:
-            self.input_features = sum(
-                [spec.shape[-1] for key, spec in self.input_spec.items(True, True)
-                if _unravel_key_to_tuple(key)[-1] in (self.position_key, self.velocity_key, self.target_key, self.rotation_key, 'obs')])
-            self.input_features += (128 if self.use_sentence_encoder else self.input_spec[('agents', 'observation', self.sentence_key)].shape[-1])
-            self.input_features += conv_out_channel_dim ** 2 
+                
+            self.gnn = gnn_class(**gnn_kwargs).to(self.device)
+            
 
-        
-        self.output_features = self.output_leaf_spec.shape[-1]
-
+        self.mlp_in = self.input_spec[('agents', 'observation', self.sentence_key)].shape[-1]
+        self.mlp_in += self.gnn_emb_dim if self.use_gnn else self._n_node_in() 
+        self.output_features = self.output_leaf_spec.shape[-1] 
         if self.input_has_agent_dim:
             self.mlp = MultiAgentMLP(
-                n_agent_inputs=self.input_features,
+                n_agent_inputs=self.mlp_in,
                 n_agent_outputs=self.output_features,
                 n_agents=self.n_agents,
                 centralised=self.centralised,
@@ -209,7 +172,7 @@ class MyModel(Model):
             self.mlp = nn.ModuleList(
                 [
                     MLP(
-                        in_features=self.input_features,
+                        in_features=self.mlp_in,
                         out_features=self.output_features,
                         device=self.device,
                         **kwargs,
@@ -217,9 +180,9 @@ class MyModel(Model):
                     for _ in range(self.n_agents if not self.share_params else 1)
                 ]
             )
-
-
+    
     def _forward(self, tensordict: TensorDictBase) -> TensorDictBase:
+        
         # Gather in_key
         pos = rot = vel = None
         if self.position_key is not None:
@@ -228,24 +191,28 @@ class MyModel(Model):
             rot = tensordict.get(('agents','observation',self.rotation_key))
         if self.velocity_key is not None:    
             vel = tensordict.get(('agents','observation',self.velocity_key))
-        grid_visit = tensordict.get(('agents','observation',self.grid_key))
-        sentence = tensordict.get(('agents','observation',self.sentence_key))
+            
+        grid_obs =    tensordict.get(('agents','observation',self.grid_key))
+        sentence =    tensordict.get(('agents','observation',self.sentence_key))
         grid_target = tensordict.get(('agents','observation',self.target_key))
-        obs = tensordict.get(('agents','observation','obs'))
-        batch_size = obs.shape[:-2]
+        obs =         tensordict.get(('agents','observation','obs'))
+        batch_size =  obs.shape[:-2]
         
         if self.use_conv_2d:
-            G = grid_visit.shape[-1]
-            batch_grid = grid_visit.view(-1,1,G, G)
-            grid_visit = self.conv_2d(batch_grid).mean(dim=(-3)).view(*grid_visit.shape[:-3], grid_visit.shape[-3], -1)
+            G =             grid_obs.shape[-1]
+            batch_grid =    grid_obs.view(-1,2,G, G)
+            conv_out =      self.conv_2d(batch_grid)        # (B, cnn_filters, H, W)
+            conv_flat =     conv_out.view(*grid_obs.shape[:-3], -1)  # (B, cnn_filters * H * W)
+            grid_obs =      self.linear_from_conv(conv_flat)    # (B, cnn_emb_dim)
         
-        node_feat = [grid_visit, grid_target]
+        node_feat = [grid_obs, grid_target, obs]
         if pos is not None and not self.exclude_pos_from_node_features:
             node_feat.append(pos)
         if rot is not None:
             node_feat.append(rot)
         if vel is not None:
             node_feat.append(vel)
+            
         x = torch.cat(node_feat, dim=-1)
         
         if self.use_gnn:
@@ -266,58 +233,16 @@ class MyModel(Model):
             ) and self.gnn_supports_edge_attrs:
                 forward_gnn_params.update({"edge_attr": graph.edge_attr})
             
-            if not self.share_params:
-                if not self.centralised:
-                    x = torch.stack(
-                        [
-                            gnn(**forward_gnn_params).view(
-                                *batch_size,
-                                self.n_agents,
-                                self.emb_dim,
-                            )[..., i, :]
-                            for i, gnn in enumerate(self.gnns)
-                        ],
-                        dim=-2,
-                    )
-                else:
-                    x = torch.stack(
-                        [
-                            gnn(**forward_gnn_params)
-                            .view(
-                                *batch_size,
-                                self.n_agents,
-                                self.emb_dim,
-                            )
-                            .mean(dim=-2)  # Mean pooling
-                            for i, gnn in enumerate(self.gnns)
-                        ],
-                        dim=-2,
-                    )
-
-            else:
-                x = self.gnns[0](**forward_gnn_params).view(
-                    *batch_size, self.n_agents, self.emb_dim
-                )
-                if self.centralised:
-                    x = res.mean(dim=-2)  # Mean pooling
-                    
-        # Pre-embed sentence
-        if self.use_sentence_encoder:
-            sentence = self.sentence_encoder(sentence)
+            x = self.gnn(**forward_gnn_params).view(
+                *batch_size, self.n_agents, self.gnn_emb_dim
+            )
         
         # Stack all inputs
-        x = torch.cat([x, obs, sentence], dim=-1)
-
-        # Has multi-agent input dimension
+        x = torch.cat([x, sentence], dim=-1)
         if self.input_has_agent_dim:
             res = self.mlp.forward(x)
             if not self.output_has_agent_dim:
-                # If we are here the module is centralised and parameter shared.
-                # Thus the multi-agent dimension has been expanded,
-                # We remove it without loss of data
                 res = res[..., 0, :]
-
-        # Does not have multi-agent input dimension
         else:
             if not self.share_params:
                 res = torch.stack(
@@ -329,6 +254,38 @@ class MyModel(Model):
 
         tensordict.set(self.out_key, res)
         return tensordict
+        
+    def _n_node_in(self) -> int:
+        """Number of input features for each node passed to the GNN."""
+        n = 0
+
+        # 1. grid_obs embedding coming from the CNN/linear layer
+        n += self.cnn_emb_dim            
+
+        # 2. target observation
+        n += self.input_spec[('agents', 'observation', self.target_key)].shape[-1]
+
+        # 3. plain observation vector ("obs")
+        n += self.input_spec[('agents', 'observation', 'obs')].shape[-1]
+
+        # 4. optional positional features
+        if self.position_key is not None and not self.exclude_pos_from_node_features:
+            n += self.pos_features          
+
+        # 5. optional rotation features
+        if self.rotation_key is not None:
+            n += self.rot_features
+
+        # 6. optional velocity features
+        if self.velocity_key is not None:
+            n += self.vel_features
+
+        return n
+
+    def _edge_attr_dim(self) -> int:
+        """Length of the edge-attribute vector (distance, Δv, …)."""
+        return (self.pos_features + 1 + self.vel_features 
+                if (self.position_key or self.velocity_key) else 0)
 
 def _get_edge_index(topology: str, self_loops: bool, n_agents: int, device: str):
     if topology == "full":
@@ -411,7 +368,6 @@ class MyModelConfig(ModelConfig):
     """Dataclass config for a :class:`~benchmarl.models.Mlp`."""
 
     use_gnn: bool = MISSING
-    use_sentence_encoder: bool = MISSING
     use_conv_2d: bool = MISSING
 
     gnn_kwargs: Optional[dict] = None
@@ -421,8 +377,14 @@ class MyModelConfig(ModelConfig):
     num_cells: Optional[Sequence[int]] = None
     layer_class: Optional[Type[nn.Module]] = None
     activation_class: Optional[Type[nn.Module]] = None
-    emb_dim: Optional[int] = None
+    
+    gnn_emb_dim: Optional[int] = None
     gnn_class: Optional[Type[torch_geometric.nn.MessagePassing]] = None
+    
+    cnn_emb_dim: Optional[int] = None
+    cnn_filters: Optional[int] = None
+    cnn_spatial: Optional[int] = None
+    
     position_key: Optional[str] = None
     pos_features: Optional[int] = 0
     rotation_key: Optional[str] = None

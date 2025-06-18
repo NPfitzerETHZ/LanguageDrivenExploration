@@ -46,7 +46,7 @@ PARAMS = [
     ("observe_agents", False), ("observe_pos_history", True),
     ("observe_vel_history", False), ("use_grid_data", True),
     ("use_class_data", True), ("use_max_targets_data", True),
-    ("use_confidence_data", False),
+    ("use_confidence_data", False), ("use_team_level_target_count", True),
 
     # --- Grid ---------------------------------------------------------------
     ("num_grid_cells", 400), ("mini_grid_radius", 1),

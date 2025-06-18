@@ -2,6 +2,9 @@ import hydra
 import os
 import json
 import re
+import time
+from pathlib import Path
+
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import get_original_cwd
 
@@ -14,6 +17,64 @@ from trainers.benchmarl_setup_experiment import benchmarl_setup_experiment
 import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy.interpolate import RegularGridInterpolator
+from torchrl.envs.utils import ExplorationType, set_exploration_type
+from benchmarl.experiment import Experiment
+
+@torch.no_grad()
+def _evaluation_loop(self):
+    evaluation_start = time.time()
+    with set_exploration_type(
+        ExplorationType.DETERMINISTIC
+        if self.config.evaluation_deterministic_actions
+        else ExplorationType.RANDOM
+    ):
+        if self.task.has_render(self.test_env) and self.config.render:
+            video_frames = []
+
+            def callback(env, td):
+                video_frames.append(
+                    self.task.__class__.render_callback(self, env, td)
+                )
+
+        else:
+            video_frames = None
+            callback = None
+
+        if self.test_env.batch_size == ():
+            rollouts = []
+            for eval_episode in range(self.config.evaluation_episodes):
+                rollouts.append(
+                    self.test_env.rollout(
+                        max_steps=self.max_steps,
+                        policy=self.policy,
+                        callback=callback if eval_episode == 0 else None,
+                        auto_cast_to_device=True,
+                        break_when_any_done=True,
+                    )
+                )
+        else:
+            rollouts = self.test_env.rollout(
+                max_steps=self.max_steps,
+                policy=self.policy,
+                callback=callback,
+                auto_cast_to_device=True,
+                break_when_any_done=False,
+                break_when_all_done=True,
+                # We are running vectorized evaluation we do not want it to stop when just one env is done
+            )
+            rollouts = list(rollouts.unbind(0))
+    evaluation_time = time.time() - evaluation_start
+    self.logger.log(
+        {"timers/evaluation_time": evaluation_time}, step=self.n_iters_performed
+    )
+    self.logger.log_evaluation(
+        rollouts,
+        video_frames=video_frames,
+        step=self.n_iters_performed,
+        total_frames=self.total_frames,
+    )
+    # Callback
+    self._on_evaluation_end(rollouts)
 
 
 def _safe_filename(text: str, max_len: int = 32) -> str:
@@ -37,13 +98,18 @@ def main(cfg: DictConfig):
     # ---------------------------------------------------------------------
     restore_path = (
         "/Users/nicolaspfitzer/ProrokLab/CustomScenarios/checkpoints/benchmarl/"
-        "gnn_multi_agent/checkpoint_7500000.pt"
+        "gnn_multi_agent/checkpoint_agent_level_targets.pt"
     )
 
     cfg.experiment.restore_file = restore_path
-    cfg.experiment.render = False
+    cfg.experiment.save_folder = Path(os.path.dirname(os.path.realpath(__file__))) / "experiments"
+    cfg.experiment.loggers[0] = "csv"
+    print(Path(os.path.dirname(os.path.realpath(__file__))) / "experiments")
+    cfg.experiment.render = True
     cfg.experiment.evaluation_episodes = NUM_ROLLOUTS
     cfg.task.params.done_at_termination = False
+    
+    #Experiment._evaluation_loop = _evaluation_loop
 
     print("Loaded Hydra config:\n" + OmegaConf.to_yaml(cfg, resolve=True))
 
@@ -87,7 +153,7 @@ def main(cfg: DictConfig):
         # --------------------------------------------------------------
         json_path = os.path.join(data_dir, "evaluation_instruction.json")
         payload = {
-            "grid": [0.0] * 100,
+            #"grid": [0.0] * 100,
             "gemini_response": new_sentence,
             "embedding": embedding.tolist(),
         }
@@ -109,8 +175,17 @@ def main(cfg: DictConfig):
         # --------------------------------------------------------------
         # Shape assumed: (num_envs, num_steps)
         team_spread_raw = experiment.test_env.base_env._env.scenario.team_spread
-        team_spread_ts = team_spread_raw.mean(dim=0)  # (num_steps,)
-        avg_team_spread = team_spread_ts.mean().item()
+        # Mask zero entries
+        non_zero_mask = team_spread_raw > 0  # shape: (1000, 250)
+
+        # Replace zeros with NaN (so we can ignore them in the mean)
+        team_spread_nan = team_spread_raw.masked_fill(~non_zero_mask, float('nan'))  # shape: (1000, 250)
+
+        # Compute mean across envs per timestep, ignoring NaNs
+        team_spread_ts = torch.nanmean(team_spread_nan, dim=0)  # shape: (250,)
+
+        # Compute overall average (optional)
+        avg_team_spread = team_spread_ts.nanmean().item()
 
         # --------------------------------------------------------------
         # Extract grid-visit heat-map

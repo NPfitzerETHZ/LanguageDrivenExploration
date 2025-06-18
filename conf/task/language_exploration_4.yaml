@@ -16,7 +16,7 @@ params:
   n_targets_per_class: 8
   n_target_classes: 1
   n_targets: 8
-  done_at_termination: true
+  done_at_termination: false
 
   # === Rewards ===
   reward_scale_factor: 0.1
@@ -61,9 +61,10 @@ params:
   use_class_data: false
   use_max_targets_data: false
   use_confidence_data: false
+  use_team_level_target_count: false
 
   # === Grid Settings ===
-  num_grid_cells: 2025
+  num_grid_cells: 1600
   mini_grid_radius: 1
 
   # === Movement & Dynamics ===

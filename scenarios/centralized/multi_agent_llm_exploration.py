@@ -174,7 +174,7 @@ class MyLanguageScenario(BaseScenario):
     
     def _initialize_scenario_vars(self, batch_dim):
         
-        self.max_target_count = torch.ones(batch_dim, dtype=torch.int, device=self.device) * self.n_targets_per_class # Initialized to n_targets (ratio)
+        self.max_target_count = torch.ones(batch_dim, dtype=torch.int, device=self.device) * self.n_targets_per_class  # Initialized to n_targets (ratio)
         self.target_class = torch.zeros(batch_dim, dtype=torch.int, device=self.device)
         self.confidence_level = torch.zeros(batch_dim, dtype=torch.int, device=self.device)
         self.targets_pos = torch.zeros((batch_dim,self.n_target_classes,self.n_targets_per_class,2), device=self.device)
@@ -208,6 +208,10 @@ class MyLanguageScenario(BaseScenario):
             self.all_time_covered_targets = torch.full(
                 (self.world.batch_dim, self.n_target_classes, self.n_targets_per_class), False, device=self.world.device
             )
+            self.all_time_agent_covered_targets = torch.full(
+                (self.world.batch_dim, self.n_target_classes, self.n_targets_per_class), False, device=self.world.device
+            )
+            
             self.targets_pos.zero_()
             
             # Reset Occupancy grid
@@ -230,6 +234,7 @@ class MyLanguageScenario(BaseScenario):
             self.team_spread[env_index].zero_()
             
             self.all_time_covered_targets[env_index] = False
+            self.all_time_agent_covered_targets[env_index] = False
             self.targets_pos[env_index].zero_()
 
             # Reset Occupancy grid
@@ -284,6 +289,7 @@ class MyLanguageScenario(BaseScenario):
             for i, target in enumerate(targets):
                 # Keep track of all-time covered targets
                 self.all_time_covered_targets[indices] += self.covered_targets[indices]
+                self.all_time_agent_covered_targets[indices] += self.agent_is_covering[indices]
 
                 # Move covered targets outside the environment
                 indices_selected = torch.where(self.covered_targets[indices,self.target_class[indices],i])[0]
