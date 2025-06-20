@@ -2,23 +2,20 @@ import typing
 from typing import List
 import torch
 
-from vmas import render_interactively
-from vmas.simulator.core import Agent,Landmark, Sphere, Box, World, Line
-from vmas.simulator.utils import Color, ScenarioUtils, TorchUtils
-from vmas.simulator.controllers.velocity_controller import VelocityController
+from vmas.simulator.core import Landmark, Box, World
+from vmas.simulator.utils import Color, TorchUtils
 from vmas.simulator.scenario import BaseScenario
-from vmas.simulator.dynamics.holonomic import Holonomic
 from vmas.simulator.sensors import Lidar
-
 if typing.TYPE_CHECKING:
     from vmas.simulator.rendering import Geom
+    
+from scenarios.decentralized.agent.agent import DecentralizedAgent
+from scenarios.grids.language_grid import LanguageGrid, load_decoder, load_task_data
 
-from scenarios.kinematic_dynamic_models.kinematic_unicycle import KinematicUnicycle
-from scenarios.grids.language_grid import LanguageGrid, load_task_data, load_decoder
 from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory
-from scenarios.centralized.scripts.observation import observation
-from scenarios.centralized.scripts.rewards import compute_reward
-from scenarios.centralized.scripts.load_config import load_scenario_config
+from scenarios.decentralized.scripts.observation import observation
+from scenarios.decentralized.scripts.rewards import compute_reward
+from scenarios.decentralized.scripts.load_config import load_scenario_config
 
 color_dict = {
     "red":      {"rgb": [1.0, 0.0, 0.0], "index": 0},
@@ -68,36 +65,47 @@ class MyLanguageScenario(BaseScenario):
         """Create agents and add them to the world."""
         
         for i in range(self.n_agents):
-            agent = Agent(
+
+            agent = DecentralizedAgent(
+                # ---------------------------------------------------------------- identifiers
                 name=f"agent_{i}",
-                collide=True,
-                silent=silent,
-                shape=Sphere(radius=self.agent_radius),
-                mass=self.agent_weight,
-                u_range=self.agent_u_range,
-                f_range=self.agent_f_range,
-                v_range=self.agent_v_range,
-                sensors=(self._create_agent_sensors(world) if self.use_lidar else []),
-                dynamics= (KinematicUnicycle(world,use_velocity_controler) if self.use_kinematic_model else Holonomic()),
-                render_action=True,
-                color=Color.GREEN
+                world=world,                     
+                batch_dim=batch_dim,             
+                device=self.device,              
+
+                # ---------------------------------------------------------------- geometry / dynamics
+                agent_radius      = self.agent_radius,
+                agent_weight      = self.agent_weight,
+                agent_u_range     = self.agent_u_range,
+                agent_f_range     = self.agent_f_range,
+                agent_v_range     = self.agent_v_range,
+                collide           = True,
+                silent            = silent,
+                use_lidar         = self.use_lidar,
+                use_kinematic_model   = self.use_kinematic_model,
+                use_velocity_controller = use_velocity_controler,  
+                color             = Color.GREEN,
+
+                # ---------------------------------------------------------------- occupancy-grid set-up
+                num_grid_cells     = self.num_grid_cells,
+                x_semidim          = self.x_semidim,
+                y_semidim          = self.y_semidim,
+                grid_visit_threshold = self.grid_visit_threshold,
+
+                # ---------------------------------------------------------------- optional state histories
+                observe_pos_history = self.observe_pos_history,
+                observe_vel_history = self.observe_vel_history,
+                pos_history_length  = self.pos_history_length,
+                vel_history_length  = self.vel_history_length,
+                pos_dim             = self.pos_dim,
+                vel_dim             = self.vel_dim,
+
+                # ---------------------------------------------------------------- sensor & controller hooks
+                lidar_sensor_factory = self._create_agent_sensors,
+                pid_controller_params = (2.0, 6.0, 0.002),
             )
-            
-            if use_velocity_controler:
-                pid_controller_params = [2, 6, 0.002]
-                agent.controller = VelocityController(
-                    agent, world, pid_controller_params, "standard"
-                )
-                
-            # Initialize Agent Variables
-            agent.collision_rew = torch.zeros(batch_dim, device=self.device)
-            agent.covering_reward = agent.collision_rew.clone()
-            agent.exploration_rew = agent.collision_rew.clone()
-            agent.coverage_rew = agent.collision_rew.clone()
-            self._create_agent_state_histories(agent, batch_dim)
-            agent.num_covered_targets = torch.zeros(batch_dim, dtype=torch.int, device=self.device)
-            agent.termination_rew = torch.zeros(batch_dim, device=self.device)
-            agent.termination_signal = torch.zeros(batch_dim, device=self.device)
+
+            # nothing else to do – the subclass already builds its own extras
             world.add_agent(agent)
     
     def _create_agent_sensors(self, world):
@@ -144,7 +152,7 @@ class MyLanguageScenario(BaseScenario):
             embedding_size=self.embedding_size,
             use_embedding_ratio= self.use_embedding_ratio,
             device=self.device)
-
+    
     def _create_obstacles(self, world):
 
         """Create obstacle landmarks and add them to the world."""
@@ -265,7 +273,7 @@ class MyLanguageScenario(BaseScenario):
         obs_poses, agent_poses, target_poses = self.occupancy_grid.spawn_llm_map(
             env_index, self.n_obstacles, self.n_agents, self.target_groups, self.target_class, self.max_target_count, self.confidence_level
         )
-
+        
         for i, idx in enumerate(env_index):
             for j, obs in enumerate(self._obstacles):
                 obs.set_pos(obs_poses[i,j],batch_index=idx)
@@ -279,7 +287,7 @@ class MyLanguageScenario(BaseScenario):
 
         for target in self._targets[self.n_targets :]:
             target.set_pos(self._get_outside_pos(env_index), batch_index=env_index)
-    
+
     def _handle_target_respawn(self):
         """Handle target respawn and removal for covered targets."""
 
@@ -308,11 +316,11 @@ class MyLanguageScenario(BaseScenario):
             device=self.world.device,
         ).uniform_(-1000 * self.world.x_semidim, -10 * self.world.x_semidim)
         
-    def reward(self, agent: Agent):
+    def reward(self, agent: DecentralizedAgent):
         """Compute the reward for a given agent."""
         return self.reward_scale_factor * compute_reward(agent,self)
 
-    def observation(self, agent: Agent):
+    def observation(self, agent: DecentralizedAgent):
         """Collect Observations from the environment"""
         return observation(agent, self)  
     
@@ -330,7 +338,7 @@ class MyLanguageScenario(BaseScenario):
             #self.agent_collision_penalty -= 0.25
  
                 
-    def process_action(self, agent: Agent):
+    def process_action(self, agent: DecentralizedAgent):
         
         if self.comm_dim > 0:
             self.coverage_action[agent.name] = agent.action._c.clone()
@@ -369,16 +377,6 @@ class MyLanguageScenario(BaseScenario):
         from vmas.simulator import rendering
 
         geoms = []
-        # Render 
-        for i, targets in enumerate(self.target_groups):
-            for target in targets:
-                range_circle = rendering.make_circle(self._covering_range, filled=False)
-                xform = rendering.Transform()
-                xform.set_translation(*target.state.pos[env_index])
-                range_circle.add_attr(xform)
-                color = self.target_colors[i].tolist()  # Convert tensor to list of floats
-                range_circle.set_color(*color)
-                geoms.append(range_circle)
         
         # Render Occupancy Grid lines
         if self.plot_grid:

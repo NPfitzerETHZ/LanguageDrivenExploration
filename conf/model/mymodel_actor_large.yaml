@@ -31,6 +31,6 @@ actor_model:
   use_conv_2d: ${..model_shared.use_conv_2d}
   gnn_emb_dim: 128
 
-  cnn_emb_dim : 9
+  cnn_emb_dim : 32
   cnn_filters: 32
   cnn_spatial: 3

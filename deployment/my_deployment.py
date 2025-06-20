@@ -28,7 +28,7 @@ from freyja_msgs.msg import CurrentState
 from freyja_msgs.msg import WaypointTarget
 
 # Local Modules
-from scenarios.grids.world_occupancy_grid import WorldOccupancyGrid
+from scenarios.grids.language_grid import LanguageGrid
 from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory
 from scenarios.centralized.scripts.observation import observation
 from scenarios.centralized.scripts.load_config import load_scenario_config
@@ -53,7 +53,7 @@ class Agent:
     robot_id: int,
     weight: float,
     pos_history_length: int,
-    grid: WorldOccupancyGrid,
+    grid: LanguageGrid,
     num_covered_targets: torch.Tensor,
     task_config,
     deployment_config,
@@ -243,7 +243,7 @@ class VmasModelsROSInterface(Node):
     
     def _create_occupancy_grid(self):
         
-        self.occupancy_grid = WorldOccupancyGrid(
+        self.occupancy_grid = LanguageGrid(
             batch_size=1,
             x_dim=MAP_NORMAL_SIZE, # [-1,1]
             y_dim=MAP_NORMAL_SIZE, # [-1,1]

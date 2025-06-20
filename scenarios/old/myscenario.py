@@ -6,7 +6,7 @@ from vmas.simulator.core import Agent,Landmark, Sphere, Box, World
 from vmas.simulator.utils import Color, ScenarioUtils 
 
 from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory
-from scenarios.grids.occupancy_grid import OccupancyGrid
+from scenarios.grids.old.occupancy_grid import OccupancyGrid
 from scenarios.old.rewards import CountBasedReward, EntropyBasedReward
 from vmas.simulator.controllers.velocity_controller import VelocityController
 

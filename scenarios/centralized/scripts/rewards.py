@@ -16,7 +16,6 @@ def compute_reward(agent, env):
     pos = agent.state.pos
 
     if env.n_targets > 0:
-        # TODO: Refactor this to support full decentralization
         
         if env.use_team_level_target_count or not env.use_gnn:
             agent.num_covered_targets = env.all_time_covered_targets[
@@ -77,12 +76,12 @@ def compute_agent_reward(agent, env):
     """
     Compute the covering reward for a specific agent.
     """
-    batch_size, n_groups, _, n_targets = env.agents_targets_dists.shape
+    _, n_groups, _, _ = env.agents_covering_targets.shape
     agent_index = env.world.agents.index(agent)
     agent.covering_reward[:] = 0
 
     targets_covered_by_agent = (
-        env.agents_targets_dists[:, :, agent_index, :] < env._covering_range  # [B, G, T]
+        env.agents_covering_targets[:,:,agent_index,:]  # [B, G, T]
     )
     num_covered = (
         targets_covered_by_agent * env.covered_targets  # [B, G, T]
@@ -113,13 +112,12 @@ def compute_agent_distance_matrix(env):
         env.targets_pos[:, i, :, :] = torch.stack(
             [t.state.pos for t in targets], dim=1
         )
-
-    env.agents_targets_dists = torch.cdist(
-        env.agents_pos.unsqueeze(1),
-        env.targets_pos
-    )
-
-    env.agents_covering_targets = env.agents_targets_dists < env._covering_range
+    
+    delta = torch.abs(env.agents_pos.unsqueeze(1).unsqueeze(3) - env.targets_pos.unsqueeze(2))
+    hx = env.occupancy_grid.cell_size_x  / 2   # half-width  in x
+    hy = env.occupancy_grid.cell_size_y / 2   # half-height in y
+    env.agents_covering_targets = (delta[..., 0] <= hx) & (delta[..., 1] <= hy)
+    
     env.agents_per_target = env.agents_covering_targets.int().sum(dim=2)
     env.agent_is_covering = env.agents_covering_targets.any(dim=2)
     env.covered_targets = env.agents_per_target >= env._agents_per_target
@@ -164,7 +162,7 @@ def compute_exploration_rewards(agent, pos, env):
     """
     Compute exploration and heading bonuses for the agent.
     """
-    agent.exploration_rew += env.occupancy_grid.compute_exploration_bonus(
+    agent.exploration_rew += env.occupancy_grid.internal_grid.compute_exploration_bonus(
         pos,
         exploration_rew_coeff=env.exploration_rew_coeff,
         new_cell_rew_coeff=env.new_cell_rew_coeff
@@ -186,7 +184,7 @@ def compute_exploration_rewards(agent, pos, env):
                 env.coverage_action[agent.name]
             )
 
-    env.occupancy_grid.update(pos, env.mini_grid_radius)
+    env.occupancy_grid.internal_grid.update(pos, env.mini_grid_radius, env.occupancy_grid.environment.grid_targets)
 
 def compute_termination_rewards(agent, env):
     """

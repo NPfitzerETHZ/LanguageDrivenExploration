@@ -6,7 +6,6 @@ params:
   # === Map & Scenario Layout ===
   x_semidim: 3.0
   y_semidim: 3.0
-  covering_range: 0.15
   agent_radius: 0.17
   n_obstacles: 0
 

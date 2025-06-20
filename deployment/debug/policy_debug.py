@@ -23,7 +23,7 @@ import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))  
 from scenarios.centralized.multi_agent_llm_exploration import MyLanguageScenario
-from scenarios.grids.world_occupancy_grid import WorldOccupancyGrid
+from scenarios.grids.old.world_occupancy_grid import WorldOccupancyGrid
 import hydra
 from omegaconf import DictConfig
 

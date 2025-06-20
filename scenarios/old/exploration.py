@@ -17,7 +17,7 @@ if typing.TYPE_CHECKING:
 
 import torch
 from scenarios.centralized.scripts.histories import VelocityHistory, PositionHistory, JointPosHistory
-from scenarios.grids.occupancy_grid import OccupancyGrid
+from scenarios.grids.old.occupancy_grid import OccupancyGrid
 from scenarios.old.rewards import CountBasedReward, EntropyBasedReward, JointEntropyBasedReward
 
 class MyScenario(BaseScenario):
