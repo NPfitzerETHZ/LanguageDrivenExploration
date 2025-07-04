@@ -30,7 +30,7 @@ def compute_reward(agent, env):
         ].sum(dim=-1)
         
         env.covering_rew_val = torch.exp(
-            env.exponential_search_rew * (team_coverage + 1) / env.max_target_count
+            env.exponential_search_rew * (team_coverage + 1) / 1
         ) + (env.covering_rew_coeff - 1)
 
     # === Initialize Reward Buffers ===
@@ -99,12 +99,6 @@ def compute_agent_distance_matrix(env):
     Compute agent-target and agent-agent distances and update related tensors in env.
     """
     env.agents_pos = torch.stack([a.state.pos for a in env.world.agents], dim=1)
-
-    for i, targets in enumerate(env.target_groups):
-        env.targets_pos[:, i, :, :] = torch.stack(
-            [t.state.pos for t in targets], dim=1
-        )
-    
     delta = torch.abs(env.agents_pos.unsqueeze(1).unsqueeze(3) - env.targets_pos.unsqueeze(2))
     hx = env.occupancy_grid.cell_size_x  / 2   # half-width  in x
     hy = env.occupancy_grid.cell_size_y / 2   # half-height in y
@@ -167,14 +161,13 @@ def compute_exploration_rewards(agent, pos: torch.Tensor, env):
             )
 
     grid_targets = env.occupancy_grid.environment.grid_targets
-    env.occupancy_grid.internal_grid.update_visits(pos)
-    agent.occupancy_grid.update(pos, env.mini_grid_radius, grid_targets)
+    env.occupancy_grid.internal_grid.update(pos, env.mini_grid_radius, grid_targets)
 
 def compute_termination_rewards(agent, env):
     """
     Compute termination reward and movement penalty after task completion.
     """
-    reached_mask = agent.num_covered_targets >= env.max_target_count
+    reached_mask = agent.num_covered_targets >= 1
     agent.termination_rew += reached_mask * (1 - agent.termination_signal) * env.terminal_rew_coeff
 
     if reached_mask.any():

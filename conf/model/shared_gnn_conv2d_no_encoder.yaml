@@ -3,3 +3,6 @@ model_shared:
   use_conv_2d: true
   comms_radius: 1.0
   use_sentence_encoder: false
+  cnn_emb_dim : 32
+  cnn_filters: 32
+  cnn_spatial: 3

@@ -1,10 +1,4 @@
 import torch
-from typing import Union
-
-#from deployment.my_deployment import Agent as RosAgent
-#from scenarios.decentralized.agent.agent import DecentralizedAgent
-#from scenarios.decentralized.decentralized_multi_agent_llm_exploration import MyLanguageScenario
-#from deployment.my_deployment import VmasModelsROSInterface
 
 def observation(agent, env):
     """
@@ -27,10 +21,10 @@ def observation(agent, env):
             - x_semidim, y_semidim: Map half-dimensions for normalization
             - device: Target device for computation
             - use_lidar, observe_pos_history, observe_vel_history
-            - llm_activate, observe_targets, max_target_objective
-            - use_occupancy_grid_obs, use_expo_search_rew
+            - llm_activate, observe_targets
+            - use_expo_search_rew
             - mini_grid_radius: Radius for grid-based methods
-            - max_target_count, num_covered_targets: Tensors [1]
+            - num_covered_targets: Tensor [1]
             - use_gnn: Boolean
 
     Returns:
@@ -40,9 +34,9 @@ def observation(agent, env):
             A single concatenated observation tensor
     """
     # === Validation ===
-    assert hasattr(agent, "occupancy_grid")
     assert hasattr(agent, "state") and hasattr(agent.state, "pos") and hasattr(agent.state, "vel") and hasattr(agent.state, "rot")
     assert hasattr(env, "x_semidim") and hasattr(env, "y_semidim") and hasattr(env, "device")
+    #agent_id = int(agent.name.split("_")[-1])
 
     obs_components = []
     obs_dict = {}
@@ -53,11 +47,12 @@ def observation(agent, env):
     rot = agent.state.rot
     pos_norm = pos / torch.tensor([env.x_semidim, env.y_semidim], device=env.device)
     vel_norm = vel / torch.tensor([env.x_semidim, env.y_semidim], device=env.device)
-    
+        
     # === LLM sentence embedding ===
     if env.llm_activate:
-        obs_dict["sentence_embedding"] = env.occupancy_grid.observe_embeddings()
-    
+        obs_dict["task"] = env.occupancy_grid.observe_task_embeddings()
+        obs_dict["subtask"] = env.occupancy_grid.observe_subtask_embeddings()
+
     # === Histories ===
     if env.observe_pos_history:
         assert hasattr(agent, "position_history")
@@ -70,27 +65,23 @@ def observation(agent, env):
         vel_hist = agent.velocity_history.get_flattened()
         obs_components.append(vel_hist[:vel_norm.shape[0], :])
         agent.velocity_history.update(vel_norm)
-    
+
     # === LIDAR ===
     if env.use_lidar:
         assert hasattr(agent, "sensors")
         lidar_measures = torch.cat([sensor.measure() for sensor in agent.sensors], dim=-1)
         obs_components.append(lidar_measures)
     
-    # === Exponential Search Reward / Max targets ===
-    if env.use_expo_search_rew or env.use_max_targets_data:
-        obs_components.append(agent.num_covered_targets.unsqueeze(1) / env.max_target_count.unsqueeze(1))
-
     # === Target Observation ===
     if env.observe_targets:
         obs_dict["target_obs"] = env.occupancy_grid.environment.get_grid_target_observation(pos, env.mini_grid_radius)
     
     # === Obstacle Observation ===
     obs_dict["obstacle_obs"] = env.occupancy_grid.environment.get_grid_obstacle_observation(pos, env.mini_grid_radius)
-
+    
     # === Occupancy Grid ===
-    obs_dict["grid_obs"] = agent.occupancy_grid.get_grid_observation_2d(pos, env.mini_grid_radius * 7)
-
+    obs_dict["grid_obs"] = env.occupancy_grid.internal_grid.get_grid_observation_2d(pos, env.mini_grid_radius * 7)
+        
     # === Pose ===
     obs_dict["pos"] = pos_norm
     obs_dict["vel"] = vel_norm
@@ -98,7 +89,10 @@ def observation(agent, env):
         obs_dict["rot"] = rot
         
     # === Final Output ===
-    obs = torch.cat([comp for comp in obs_components if comp is not None], dim=-1)
+    if len(obs_components) > 0:
+        obs = torch.cat([comp for comp in obs_components if comp is not None], dim=-1)
+    else:
+        obs = torch.empty((pos_norm.shape[0], 0), device=env.device)
     obs_dict["obs"] = obs
 
     return obs_dict

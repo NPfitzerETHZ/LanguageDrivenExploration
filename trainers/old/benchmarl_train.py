@@ -24,184 +24,184 @@ from benchmarl.models.mlp import MlpConfig
 import os
 from pathlib import Path
 
-def get_env_fun(
-    self,
-    num_envs: int,
-    continuous_actions: bool,
-    seed: Optional[int],
-    device: DEVICE_TYPING,
-) -> Callable[[], EnvBase]:
-    config = copy.deepcopy(self.config)
-    if self is VmasTask.NAVIGATION: # This is the only modification we make ....
-        scenario = MyLanguageScenario() # .... ends here
-    else:
-        scenario = self.name.lower()
-    return lambda: VmasEnv(
-        scenario=scenario,
-        num_envs=num_envs,
-        continuous_actions=continuous_actions,
-        seed=seed,
-        device=device,
-        categorical_actions=True,
-        clamp_actions=True,
-        **config,
-    )
+# def get_env_fun(
+#     self,
+#     num_envs: int,
+#     continuous_actions: bool,
+#     seed: Optional[int],
+#     device: DEVICE_TYPING,
+# ) -> Callable[[], EnvBase]:
+#     config = copy.deepcopy(self.config)
+#     if self is VmasTask.NAVIGATION: # This is the only modification we make ....
+#         scenario = MyLanguageScenario() # .... ends here
+#     else:
+#         scenario = self.name.lower()
+#     return lambda: VmasEnv(
+#         scenario=scenario,
+#         num_envs=num_envs,
+#         continuous_actions=continuous_actions,
+#         seed=seed,
+#         device=device,
+#         categorical_actions=True,
+#         clamp_actions=True,
+#         **config,
+#     )
 
-# Comms_radius in normalized Frame
-comms_radius = 1.0
-use_gnn = False
-use_conv_2d = False
+# # Comms_radius in normalized Frame
+# comms_radius = 1.0
+# use_gnn = False
+# use_conv_2d = False
 
-VmasTask.get_env_fun = get_env_fun
+# VmasTask.get_env_fun = get_env_fun
 
 # Loads from "benchmarl/conf/experiment/base_experiment.yaml"
 experiment_config = ExperimentConfig.get_from_yaml()
 # Loads from "benchmarl/conf/task/vmas/balance.yaml"
-task = VmasTask.NAVIGATION.get_from_yaml()
-task.config = {
-    # === Map & Scenario Layout ===
-    "x_semidim": 3.0,
-    "y_semidim": 3.0,
-    "covering_range": 0.15,
-    "agent_radius": 0.17,
-    "n_obstacles": 0,
+task = VmasTask.FLOCKING.get_from_yaml()
+# task.config = {
+#     # === Map & Scenario Layout ===
+#     "x_semidim": 3.0,
+#     "y_semidim": 3.0,
+#     "covering_range": 0.15,
+#     "agent_radius": 0.17,
+#     "n_obstacles": 0,
 
-    # === Agent/Target Counts & Behavior ===
-    "n_agents": 1,
-    "agents_per_target": 1,
-    "n_targets_per_class": 4,
-    "n_target_classes": 1,
-    "n_targets": 4,  # 4 per class * 1 class
-    "done_at_termination": True,
+#     # === Agent/Target Counts & Behavior ===
+#     "n_agents": 1,
+#     "agents_per_target": 1,
+#     "n_targets_per_class": 4,
+#     "n_target_classes": 1,
+#     "n_targets": 4,  # 4 per class * 1 class
+#     "done_at_termination": True,
 
-    # === Rewards ===
-    "reward_scale_factor": 0.1,
-    "shared_target_reward": True,
-    "shared_final_reward": True,
-    "agent_collision_penalty": -0.5,
-    "obstacle_collision_penalty": -0.5,
-    "covering_rew_coeff": 7.0,
-    "false_covering_penalty_coeff": -0.25,
-    "time_penalty": -0.05,
-    "terminal_rew_coeff": 15.0,
-    "exponential_search_rew_coeff": 1.5,
-    "termination_penalty_coeff": -5.0,
+#     # === Rewards ===
+#     "reward_scale_factor": 0.1,
+#     "shared_target_reward": True,
+#     "shared_final_reward": True,
+#     "agent_collision_penalty": -0.5,
+#     "obstacle_collision_penalty": -0.5,
+#     "covering_rew_coeff": 7.0,
+#     "false_covering_penalty_coeff": -0.25,
+#     "time_penalty": -0.05,
+#     "terminal_rew_coeff": 15.0,
+#     "exponential_search_rew_coeff": 1.5,
+#     "termination_penalty_coeff": -5.0,
 
-    # === Exploration Rewards ===
-    "use_expo_search_rew": True,
-    "grid_visit_threshold": 2,
-    "exploration_rew_coeff": -0.05,
-    "new_cell_rew_coeff": 0.05,
-    "heading_exploration_rew_coeff": 30, #30,
+#     # === Exploration Rewards ===
+#     "use_expo_search_rew": True,
+#     "grid_visit_threshold": 2,
+#     "exploration_rew_coeff": -0.05,
+#     "new_cell_rew_coeff": 0.05,
+#     "heading_exploration_rew_coeff": 30, #30,
 
-    # === Lidar & Sensing ===
-    "use_lidar": False,
-    "n_lidar_rays_entities": 8,
-    "n_lidar_rays_agents": 12,
-    "max_agent_observation_radius": 0.3,
-    "prediction_horizon_steps": 1,
+#     # === Lidar & Sensing ===
+#     "use_lidar": False,
+#     "n_lidar_rays_entities": 8,
+#     "n_lidar_rays_agents": 12,
+#     "max_agent_observation_radius": 0.3,
+#     "prediction_horizon_steps": 1,
 
-    # === Agent Communication & GNNs ===
-    "use_gnn": use_gnn,
-    "use_conv_2d": use_conv_2d,
-    "comm_dim": 0,
-    "comms_radius": comms_radius,
+#     # === Agent Communication & GNNs ===
+#     "use_gnn": use_gnn,
+#     "use_conv_2d": use_conv_2d,
+#     "comm_dim": 0,
+#     "comms_radius": comms_radius,
 
-    # === Observation Settings ===
-    "observe_grid": True,
-    "observe_targets": True,
-    "observe_agents": False,
-    "observe_pos_history": False,
-    "observe_vel_history": False,
-    "use_grid_data": True,
-    "use_class_data": False,
-    "use_max_targets_data": False,
-    "use_confidence_data": False,
+#     # === Observation Settings ===
+#     "observe_grid": True,
+#     "observe_targets": True,
+#     "observe_agents": False,
+#     "observe_pos_history": False,
+#     "observe_vel_history": False,
+#     "use_grid_data": True,
+#     "use_class_data": False,
+#     "use_max_targets_data": False,
+#     "use_confidence_data": False,
 
-    # === Grid Settings ===
-    "num_grid_cells": 225,
-    "mini_grid_radius": 1,
+#     # === Grid Settings ===
+#     "num_grid_cells": 225,
+#     "mini_grid_radius": 1,
 
-    # === Movement & Dynamics ===
-    "use_velocity_controller": True,
-    "use_kinematic_model": True,
-    "agent_weight": 1.0,
-    "agent_v_range": 1.0,
-    "agent_a_range": 1.0,
-    "min_collision_distance": 0.05,
-    "linear_friction": 0.1,
+#     # === Movement & Dynamics ===
+#     "use_velocity_controller": True,
+#     "use_kinematic_model": True,
+#     "agent_weight": 1.0,
+#     "agent_v_range": 1.0,
+#     "agent_a_range": 1.0,
+#     "min_collision_distance": 0.05,
+#     "linear_friction": 0.1,
 
-    # === Histories ===
-    "history_length": 0,
+#     # === Histories ===
+#     "history_length": 0,
     
-    # === Language & LLM Goals ===
-    "embedding_size": 1024,
-    "llm_activate": True,
+#     # === Language & LLM Goals ===
+#     "embedding_size": 1024,
+#     "llm_activate": True,
 
-    # === External Inputs ===
-    "data_json_path": "data/language_data_complete_multi_target_color_scale.json",
-    "decoder_model_path": "decoders/llm0_decoder_model_grid_single_target_color.pth",
-    "use_decoder": False,
+#     # === External Inputs ===
+#     "data_json_path": "data/language_data_complete_multi_target_color_scale.json",
+#     "decoder_model_path": "decoders/llm0_decoder_model_grid_single_target_color.pth",
+#     "use_decoder": False,
 
-    # === Visuals ===
-    "viewer_zoom": 1,
+#     # === Visuals ===
+#     "viewer_zoom": 1,
 
-    # === Additional Scenario ===
-    "max_steps": 250
-}
+#     # === Additional Scenario ===
+#     "max_steps": 250
+# }
 
-# Loads from "benchmarl/conf/algorithm/mappo.yaml"
+# # Loads from "benchmarl/conf/algorithm/mappo.yaml"
 algorithm_config = MappoConfig.get_from_yaml()
-#algorithm_config = MappoConfig.get_from_yaml()
-algorithm_config.entropy_coef = 0.0
+# #algorithm_config = MappoConfig.get_from_yaml()
+# algorithm_config.entropy_coef = 0.0
 
-model_config = MyModelConfig(   
-    # GNN Config
-    topology="from_pos", # Tell the GNN to build topology from positions and edge_radius
-    edge_radius=comms_radius, # The edge radius for the topology
-    self_loops=True,
-    #gnn_class=torch_geometric.nn.conv.GraphConv,
-    #gnn_kwargs={"add_self_loops": True, "residual": True}, # kwargs of GATv2Conv, residual is helpf>
-    gnn_class=torch_geometric.nn.conv.GATv2Conv,
-    gnn_kwargs={"add_self_loops": False, "residual": True}, # kwargs of GATv2Conv, residual is helpf>
-    position_key="pos",
-    pos_features=2,
-    rotation_key="rot",
-    rot_features=1,
-    velocity_key="vel",
-    vel_features=2,
-    sentence_key="sentence_embedding",
-    grid_key="grid_obs",
-    target_key="target_obs",
-    exclude_pos_from_node_features=False,
-    # MLP Config
-    num_cells=[256, 256],  # Hidden layers sizes
-    layer_class=nn.Linear,  # Type of layer to use
-    activation_class=nn.ReLU,  # Activation function to use
-    use_gnn=use_gnn,  # Whether to use GNN or not
-    use_sentence_encoder=False,
-    use_conv_2d=use_conv_2d, 
-    emb_dim=64
-)
-critic_model_config = MyModelConfig(   
-    sentence_key="sentence_embedding",
-    position_key="pos",
-    rotation_key="rot",
-    velocity_key="vel",
-    grid_key="grid_obs",
-    target_key="target_obs",
-    exclude_pos_from_node_features=False,
-    # MLP Config
-    num_cells=[512, 256],  # Hidden layers sizes
-    layer_class=nn.Linear,  # Type of layer to use
-    activation_class=nn.ReLU,  # Activation function to use
-    use_gnn=False,  # Whether to use GNN or not
-    use_sentence_encoder=False,
-    use_conv_2d=use_conv_2d, 
-    emb_dim=64
-)
-#model_config = MlpConfig(num_cells=[512,256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
-#critic_model_config = MlpConfig(num_cells=[512,256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
+# model_config = MyModelConfig(   
+#     # GNN Config
+#     topology="from_pos", # Tell the GNN to build topology from positions and edge_radius
+#     edge_radius=comms_radius, # The edge radius for the topology
+#     self_loops=True,
+#     #gnn_class=torch_geometric.nn.conv.GraphConv,
+#     #gnn_kwargs={"add_self_loops": True, "residual": True}, # kwargs of GATv2Conv, residual is helpf>
+#     gnn_class=torch_geometric.nn.conv.GATv2Conv,
+#     gnn_kwargs={"add_self_loops": False, "residual": True}, # kwargs of GATv2Conv, residual is helpf>
+#     position_key="pos",
+#     pos_features=2,
+#     rotation_key="rot",
+#     rot_features=1,
+#     velocity_key="vel",
+#     vel_features=2,
+#     sentence_key="sentence_embedding",
+#     grid_key="grid_obs",
+#     target_key="target_obs",
+#     exclude_pos_from_node_features=False,
+#     # MLP Config
+#     num_cells=[256, 256],  # Hidden layers sizes
+#     layer_class=nn.Linear,  # Type of layer to use
+#     activation_class=nn.ReLU,  # Activation function to use
+#     use_gnn=use_gnn,  # Whether to use GNN or not
+#     use_sentence_encoder=False,
+#     use_conv_2d=use_conv_2d, 
+#     emb_dim=64
+# )
+# critic_model_config = MyModelConfig(   
+#     sentence_key="sentence_embedding",
+#     position_key="pos",
+#     rotation_key="rot",
+#     velocity_key="vel",
+#     grid_key="grid_obs",
+#     target_key="target_obs",
+#     exclude_pos_from_node_features=False,
+#     # MLP Config
+#     num_cells=[512, 256],  # Hidden layers sizes
+#     layer_class=nn.Linear,  # Type of layer to use
+#     activation_class=nn.ReLU,  # Activation function to use
+#     use_gnn=False,  # Whether to use GNN or not
+#     use_sentence_encoder=False,
+#     use_conv_2d=use_conv_2d, 
+#     emb_dim=64
+# )
+model_config = MlpConfig(num_cells=[256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
+critic_model_config = MlpConfig(num_cells=[256,256],layer_class=nn.Linear,activation_class=nn.ReLU)
 
 # if use_gnn:
     

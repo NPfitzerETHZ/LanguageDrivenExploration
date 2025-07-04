@@ -67,7 +67,8 @@ class MyModel(Model):
         exclude_pos_from_node_features: Optional[bool],
         velocity_key: Optional[str],
         rotation_key: Optional[str],
-        sentence_key: Optional[str],
+        task_key: Optional[str],
+        subtask_key: Optional[str],
         grid_key: Optional[str],
         target_key: Optional[str],
         obstacle_key: Optional[str],
@@ -88,7 +89,8 @@ class MyModel(Model):
         self.position_key = position_key
         self.rotation_key = rotation_key
         self.velocity_key = velocity_key
-        self.sentence_key = sentence_key
+        self.task_key = task_key
+        self.subtask_key = subtask_key
         self.grid_key =     grid_key
         self.target_key =   target_key
         self.obstacle_key = obstacle_key
@@ -154,11 +156,27 @@ class MyModel(Model):
                 n_agents=self.n_agents,
             )
                 
-            self.gnn = gnn_class(**gnn_kwargs).to(self.device)
-            
+            self.gnn = gnn_class(**gnn_kwargs).to(self.device) 
+        
+        task_dim = self.input_spec[('agents', 'observation', self.task_key)].shape[-1]
+        subtask_dim = self.input_spec[('agents', 'observation', self.subtask_key)].shape[-1]
+        
+        self.task_encoder = MLP(
+            in_features=task_dim,
+            out_features=gnn_emb_dim,
+            num_cells=[256,256],
+            activation_class=nn.ReLU,
+        )
+        
+        self.subtask_encoder = MLP(
+            in_features=subtask_dim,
+            out_features=gnn_emb_dim,
+            num_cells=[256,256],
+            activation_class=nn.ReLU,
+        )
 
         self.mlp_in = self._environment_obs_dim()
-        self.mlp_in += self.gnn_emb_dim if self.use_gnn else self._n_node_in() 
+        self.mlp_in += 3 * self.gnn_emb_dim if self.use_gnn else (self._n_node_in() + 2 * self.gnn_emb_dim)
         self.output_features = self.output_leaf_spec.shape[-1] 
         if self.input_has_agent_dim:
             self.mlp = MultiAgentMLP(
@@ -195,7 +213,8 @@ class MyModel(Model):
             vel = tensordict.get(('agents','observation',self.velocity_key))
             
         grid_obs =      tensordict.get(('agents','observation',self.grid_key))
-        sentence =      tensordict.get(('agents','observation',self.sentence_key))
+        task =          tensordict.get(('agents','observation',self.task_key))
+        subtask =       tensordict.get(('agents','observation',self.subtask_key))
         grid_target =   tensordict.get(('agents','observation',self.target_key))
         grid_obstacle = tensordict.get(('agents','observation',self.obstacle_key))
         obs =           tensordict.get(('agents','observation','obs'))
@@ -241,7 +260,9 @@ class MyModel(Model):
             )
         
         # Stack all inputs
-        x = torch.cat([x, grid_target, grid_obstacle, sentence], dim=-1)
+        task_emb = self.task_encoder(task)
+        subtask_emb = self.subtask_encoder(subtask)
+        x = torch.cat([x, grid_target, grid_obstacle, task_emb, subtask_emb], dim=-1)
         if self.input_has_agent_dim:
             res = self.mlp.forward(x)
             if not self.output_has_agent_dim:
@@ -291,8 +312,6 @@ class MyModel(Model):
         n += self.input_spec[('agents', 'observation', self.target_key)].shape[-1]
         # 2. Obstacles
         n += self.input_spec[('agents', 'observation', self.obstacle_key)].shape[-1]
-        # Sentence embedding
-        n += self.input_spec[('agents', 'observation', self.sentence_key)].shape[-1]
         
         return n
 
@@ -405,7 +424,8 @@ class MyModelConfig(ModelConfig):
     rot_features: Optional[int] = 0
     velocity_key: Optional[str] = None
     vel_features: Optional[int] = 0
-    sentence_key: Optional[str] = None
+    task_key: Optional[str] = None
+    subtask_key: Optional[str] = None
     grid_key: Optional[str] = None
     target_key: Optional[str] = None
     obstacle_key: Optional[str] = None

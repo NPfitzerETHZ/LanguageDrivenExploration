@@ -1,21 +1,20 @@
 
 name: SAMPLING                          # maps to VmasTask.SAMPLING
-scenario_class: scenarios.decentralized.decentralized_multi_agent_llm_exploration.MyLanguageScenario
+scenario_class: scenarios.sequential_tasks.multi_agent_sequential.MyLanguageScenario
 
 params:
   # === Map & Scenario Layout ===
   x_semidim: 1.0
   y_semidim: 1.0
-  covering_range: 0.15
   agent_radius: 0.03
   n_obstacles: 0
 
   # === Agent/Target Counts & Behavior ===
   n_agents: 3
   agents_per_target: 1
-  n_targets_per_class: 8
+  n_targets_per_class: 1
   n_target_classes: 1
-  n_targets: 8
+  n_targets: 1
   done_at_termination: false
 
   # === Rewards ===
@@ -38,10 +37,16 @@ params:
   new_cell_rew_coeff: 0.00
   heading_exploration_rew_coeff: 30
 
+  # === Defend Rewards ===
+  defend_behaviour_factor: 1.0
+  defend_dist_shaping_factor: 1.0
+
+  # === Navigation Rewards ===
+  nav_pos_shaping_factor: 1.0
+  nav_final_reward: 10.0
+
   # === Lidar & Sensing ===
   use_lidar: false
-  n_lidar_rays_entities: 8
-  n_lidar_rays_agents: 12
   max_agent_observation_radius: 0.3
   prediction_horizon_steps: 1
 
@@ -64,7 +69,7 @@ params:
   use_team_level_target_count: false
 
   # === Grid Settings ===
-  num_grid_cells: 1024
+  num_grid_cells: 1600
   mini_grid_radius: 1
 
   # === Movement & Dynamics ===
@@ -85,7 +90,7 @@ params:
   llm_activate: true
 
   # === External Inputs ===
-  data_json_path: data/language_data_complete_target_scale.json
+  data_json_path: data/dataset_full.json
   decoder_model_path: decoders/llm0_decoder_model_grid_scale.pth
   use_decoder: true
 

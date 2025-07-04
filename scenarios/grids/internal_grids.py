@@ -22,19 +22,27 @@ class InternalOccupancyGrid(CoreGrid):
         self.grid_visits = torch.zeros((batch_size,self.padded_grid_height, self.padded_grid_width), device=self.device)
         self.grid_visits_sigmoid = torch.zeros((batch_size,self.padded_grid_height, self.padded_grid_width), device=self.device)
     
-    def update(self, agent_positions: torch.Tensor, mini_grid_radius: int, grid_targets: torch.Tensor):
+    def update(
+        self,
+        agent_positions: torch.Tensor,   # (B,2)
+        mini_grid_radius: int,
+        grid_targets: torch.Tensor,      # (ALL, H, W)
+        env_index: torch.Tensor = None,  # (B,)
+        ):
         
-        B, dev = agent_positions.size(0), agent_positions.device
+        if env_index is None:
+            B, dev = agent_positions.size(0), agent_positions.device
+            env_index    = torch.arange(B, device=dev)
+        
         gx, gy = self.world_to_grid(agent_positions, padding=True)      # (B,)
-        idx    = torch.arange(B, device=dev)
 
         # 1) mark targets the agents are standing on
-        visited = grid_targets[idx, gy, gx] == TARGET
-        self.grid_found_targets[idx[visited], gy[visited], gx[visited]] = VISITED_TARGET
-        grid_targets[idx[visited], gy[visited], gx[visited]] = EMPTY                      # despawn
+        visited = grid_targets[env_index, gy, gx] == TARGET
+        self.grid_found_targets[env_index[visited], gy[visited], gx[visited]] = VISITED_TARGET
+        grid_targets[env_index[visited], gy[visited], gx[visited]] = EMPTY                      # despawn
 
         # 2) copy current field of view into observation map
-        b = idx[:, None, None]                                          # (B,1,1)
+        b = env_index[:, None, None]                                          # (B,1,1)
         x_rng, y_rng = self.sample_mini_grid(agent_positions, mini_grid_radius)
         mini = grid_targets[b, y_rng[..., None], x_rng[:, None, :]]
         self.grid_observed_targets[b, y_rng[..., None], x_rng[:, None, :]] = mini
@@ -44,9 +52,9 @@ class InternalOccupancyGrid(CoreGrid):
         self.grid_observed_targets[mask] = VISITED_TARGET
 
         # 4) update visit counts
-        self.grid_visits[idx, gy, gx] += 1
-        v = self.grid_visits[idx, gy, gx] - self.visit_threshold
-        self.grid_visits_sigmoid[idx, gy, gx] = VISIT * torch.sigmoid(v)
+        self.grid_visits[env_index, gy, gx] += 1
+        v = self.grid_visits[env_index, gy, gx] - self.visit_threshold
+        self.grid_visits_sigmoid[env_index, gy, gx] = VISIT * torch.sigmoid(v)
     
     def update_visits(self, agent_positions):
         
