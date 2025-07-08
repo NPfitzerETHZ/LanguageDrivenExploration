@@ -89,6 +89,10 @@ def load_task_data(
         if all("summary" in entry for entry in dataset):
             sentences = [entry["summary"] for entry in dataset]
             output["summary"] = sentences
+        
+        if all("responses" in entry for entry in dataset):
+            responses = [entry["responses"] for entry in dataset]
+            output["responses"] = responses
 
         if all("grid" in entry for entry in dataset) and use_grid_data:
             grids = [[*entry["grid"]] for entry in dataset]
@@ -185,6 +189,7 @@ class LanguageGrid(CoreGrid):
         self.subtask_embeddings = torch.zeros((self.batch_size,embedding_size),device=self.device)
         self.states = torch.zeros((self.batch_size,), device=self.device)
         self.summary = [ "" for _ in range(self.batch_size)]
+        self.response = [ "" for _ in range(self.batch_size)]
         
     def sample_dataset(self,env_index, packet_size):
         
@@ -206,12 +211,13 @@ class LanguageGrid(CoreGrid):
             sample_indices = torch.cat([base, extra])
         
         # Sample tensors
-        task_dict = {key: value[sample_indices] for key, value in train_dict.items() if key in train_dict and key not in ["states", "subtasks", "summary"]}
+        task_dict = {key: value[sample_indices] for key, value in train_dict.items() if key in train_dict and key not in ["states", "subtasks", "responses", "summary"]}
         # Sample sentences
         indices_list = sample_indices.tolist()
         task_dict["summary"] = [train_dict["summary"][i] for i in indices_list]
         task_dict["subtasks"] = [train_dict["subtasks"][i] for i in indices_list]
         task_dict["states"] = [train_dict["states"][i] for i in indices_list]
+        task_dict["responses"] = [train_dict["responses"][i] for i in indices_list]
         
         subtask_indices = torch.zeros(packet_size, dtype=torch.long, device=self.device)
 
@@ -256,12 +262,13 @@ class LanguageGrid(CoreGrid):
             self.num_heading_cells[env_index] = num_heading_cells.view(-1,1)
             self.grid_heading[env_index] = new_grids_scaled
         
-        if "subtasks" in task_dict:
+        if "subtasks" in task_dict and "responses" in task_dict:
             for i , idx in enumerate(env_index):
                 num_subtasks = task_dict["subtasks"][i].shape[0]
                 subtask_idx =  random.randint(0, num_subtasks - 1) if num_subtasks > 0 else 0
                 subtask_indices[i] = subtask_idx
                 self.subtask_embeddings[idx] = task_dict["subtasks"][i][subtask_idx]
+                self.response[idx] = task_dict["responses"][i][subtask_idx]
         
         if "states" in task_dict: 
             for i , idx in enumerate(env_index):
@@ -489,11 +496,11 @@ class LanguageGrid(CoreGrid):
         agent_centers, obstacle_centers, target_poses, sample = self.generate_random_grid(env_index, packet_size, n_agents, n_obstacles, unknown_targets, target_poses, not_explore_mask, padding)
         
         #If task is NAVIGATION or DEFEND, Update internal grid with found target
-        self.internal_grid.update(sample, MINI_GRID_RADIUS, self.environment.grid_targets, not_explore_idx)
+        self.internal_grid.update(sample, MINI_GRID_RADIUS, self.environment.grid_targets, not_explore_idx, despawn_targets=False)
         return obstacle_centers.squeeze(-2), agent_centers.squeeze(-2), target_poses
     
     
-    def gaussian_heading(self, env_index: torch.Tensor, t_index: int, pos: torch.Tensor, sigma_coef=0.05):
+    def gaussian_heading(self, env_index: torch.Tensor, t_index: int, pos: torch.Tensor, sigma_coef=0.15):
         """
         pos: (batch_size, 2)
         env_index: (batch_size,)
@@ -600,6 +607,7 @@ class LanguageGrid(CoreGrid):
         self.subtask_embeddings.zero_()
         self.states.zero_()
         self.summary = [ ""  for _ in range(self.batch_size)]
+        self.response = [ ""  for _ in range(self.batch_size)]
         
         self.internal_grid.reset_all()
         self.environment.reset_all()
@@ -616,7 +624,7 @@ class LanguageGrid(CoreGrid):
         self.subtask_embeddings[env_index].zero_()
         self.states[env_index].zero_()
         self.summary[env_index] = ""
-        
+        self.response[env_index] = ""
         
         self.internal_grid.reset_env(env_index)
         self.environment.reset_env(env_index)

@@ -92,7 +92,7 @@ params:
   # === External Inputs ===
   data_json_path: data/dataset_full.json
   decoder_model_path: decoders/llm0_decoder_model_grid_scale.pth
-  use_decoder: true
+  use_decoder: false
 
   # === Visuals ===
   viewer_zoom: 1

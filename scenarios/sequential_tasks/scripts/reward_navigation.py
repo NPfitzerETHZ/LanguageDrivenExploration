@@ -3,9 +3,10 @@ def compute_reward(agent, env):
     is_first = agent == env.world.agents[0]
     
     nav_pos_rew = torch.zeros((env.world.batch_dim,), device=env.device) 
-    nav_final_rew = torch.zeros((env.world.batch_dim,), device=env.device) 
+    nav_final_rew = torch.zeros((env.world.batch_dim,), device=env.device)
 
     if is_first:
+            
         for a in env.world.agents:
             nav_pos_rew += agent_reward(env,a)
             a.collision_rew[:] = 0
@@ -25,10 +26,10 @@ def compute_reward(agent, env):
                     distance = env.world.get_distance(a, b)
                     a.collision_rew[
                         distance <= env.min_collision_distance
-                    ] += env.agent_collision_penalty
+                    ] += env.agent_collision_penalty * 0
                     b.collision_rew[
                         distance <= env.min_collision_distance
-                    ] += env.agent_collision_penalty
+                    ] += env.agent_collision_penalty * 0
 
     pos_reward = nav_pos_rew if env.nav_shared_rew else agent.nav_pos_rew
     return pos_reward + nav_final_rew + agent.collision_rew

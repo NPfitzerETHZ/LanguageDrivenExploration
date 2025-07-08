@@ -47,8 +47,12 @@ def compute_reward(agent, env, def_type: int):
         agent.target_distance = torch.linalg.vector_norm(
             agent.state.pos - env.flock_target,
             dim=-1,
-        )
-        # reward for being close to the target
-        agent.dist_rew += (agent.target_distance * env.defend_dist_shaping_factor)
+        ) - env.desired_distance[def_type]
+        
+        # penalty for being far from the target
+        agent.dist_rew += (-1 * agent.target_distance * env.defend_dist_shaping_factor)
+        
+        agent_speed = torch.linalg.vector_norm(agent.state.vel, dim=-1)
+        stillness_penalty = (agent_speed < env.stillness_speed_thresh).float() * env.stillness_penalty
 
-        return agent.collision_rew + agent.dist_rew
+        return agent.collision_rew + agent.dist_rew + stillness_penalty

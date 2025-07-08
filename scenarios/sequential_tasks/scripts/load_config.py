@@ -22,7 +22,7 @@ PARAMS = [
     ("reward_scale_factor", 0.1),
     ("shared_target_reward", True), ("shared_final_reward", True),
     ("agent_collision_penalty", -0.5), ("obstacle_collision_penalty", -0.5),
-    ("covering_rew_coeff", 5.0), ("false_covering_penalty_coeff", -0.25),
+    ("covering_rew_coeff", 8.0), ("false_covering_penalty_coeff", -0.25),
     ("time_penalty", -0.05), ("terminal_rew_coeff", 15.0),
     ("exponential_search_rew", "exponential_search_rew_coeff", 1.5),
     ("termination_penalty_coeff", -5.0),
@@ -30,14 +30,15 @@ PARAMS = [
     # --- Exploration --------------------------------------------------------
     ("use_expo_search_rew", True), ("grid_visit_threshold", 3),
     ("exploration_rew_coeff", -0.05), ("new_cell_rew_coeff", 0.0),
-    ("heading_exploration_rew_coeff", 20.0),
+    ("heading_exploration_rew_coeff", 30.0),
     
     # --- Defend -------------------------------------------------------------
-    ("defend_behaviour_factor", 0.5), ("defend_dist_shaping_factor", 0.5),
+    ("defend_behaviour_factor", 1.0), ("defend_dist_shaping_factor", 1.0),
     ("desired_distance", {DEFEND_TIGHT: 0.1, DEFEND_WIDE: 0.4}),  # {DEFEND_TIGHT: 0.2, DEFEND_WIDE: 0.4}
+    ("stillness_speed_thresh", 0.05), ("stillness_penalty", -0.25),
     
     # --- Navigation ---------------------------------------------------------
-    ("nav_pos_shaping_factor", 0.5), ("nav_final_reward", 5.0), ("nav_shared_rew", False),
+    ("nav_pos_shaping_factor", 1.0), ("nav_final_reward", 5.0), ("nav_shared_rew", False),
     
     # --- Lidar & Sensing ----------------------------------------------------
     ("use_lidar", False), ("use_target_lidar", False),

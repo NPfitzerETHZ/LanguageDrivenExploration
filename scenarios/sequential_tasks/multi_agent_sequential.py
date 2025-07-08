@@ -108,6 +108,11 @@ class MyLanguageScenario(BaseScenario):
             agent.def_dist_shaping = {DEFEND_TIGHT: init_tensors(), DEFEND_WIDE: init_tensors()}
             self._create_agent_state_histories(agent, batch_dim)
             
+            # Events
+            agent.holding_flag = torch.zeros(batch_dim, dtype=torch.bool, device=self.device)
+            agent.spotted_enemy = torch.zeros(batch_dim, dtype=torch.bool, device=self.device)
+            agent.on_base = torch.zeros(batch_dim, dtype=torch.bool, device=self.device)
+            
             world.add_agent(agent)
     
     def _create_agent_sensors(self, world):
@@ -184,7 +189,7 @@ class MyLanguageScenario(BaseScenario):
             name="base",
             collide=False,
             movable=False,
-            shape=Box(length=self.occupancy_grid.cell_size_y * self.y_semidim * 4 ,width=self.occupancy_grid.cell_size_x * self.x_semidim * 4),
+            shape=Box(length=self.occupancy_grid.cell_size_y * self.y_semidim * 6 ,width=self.occupancy_grid.cell_size_x * self.x_semidim * 6),
             color=Color.YELLOW
         )
         world.add_landmark(self.base)
@@ -318,8 +323,27 @@ class MyLanguageScenario(BaseScenario):
             self.base.set_pos(torch.tensor([0, 0], device=self.world.device), batch_index=idx)
 
     def _update_agent_rewards(self, env_index):
-        self.flock_target = self.targets_pos[:, 0, 0, :]
-        for agent in self.world.agents:
+        self.flock_target[env_index] = self.targets_pos[env_index, 0, 0, :]
+
+        dist = torch.full((self.world.batch_dim,), float('inf'), device=self.world.device)
+        agent_index = torch.zeros(self.world.batch_dim, dtype=torch.int, device=self.world.device)
+        for i, agent in enumerate(self.world.agents):
+            
+            # Find closest agent to flock target
+            dist_new = torch.linalg.vector_norm(
+                agent.state.pos[env_index] - self.flock_target[env_index],
+                dim=-1
+            )
+            dist_mask = dist_new < dist[env_index]
+            dist[env_index][dist_mask] = dist_new[dist_mask]
+            agent_index[env_index][dist_mask] = i
+            
+            # Spotted enemy event matches defending state, 0: DEFEND WIDE, 1: DEFEND TIGHT
+
+            agent.spotted_enemy[env_index] = (
+                self.occupancy_grid.states[env_index] == DEFEND_TIGHT
+            )
+            
             agent.nav_pos_shaping[env_index] = (
                 torch.linalg.vector_norm(agent.state.pos[env_index] - self.base.state.pos[env_index])
                 * self.nav_pos_shaping_factor
@@ -333,22 +357,26 @@ class MyLanguageScenario(BaseScenario):
                     - self.desired_distance[key]
                 ).pow(2).mean(-1) * self.defend_dist_shaping_factor
         
+        # Set found flag for agents closest to the flock target
+        for i, agent in enumerate(self.world.agents):
+            
+            agent.holding_flag[env_index] = (
+                self.occupancy_grid.states[env_index] == NAVIGATE
+            ) | (
+                self.occupancy_grid.states[env_index] == DEFEND_TIGHT
+            ) | (
+                self.occupancy_grid.states[env_index] == DEFEND_WIDE
+            )
+            agent.holding_flag[env_index] &= (agent_index[env_index] == i)
+        
+            
     def _handle_target_respawn(self):
         """Handle target respawn and removal for covered targets."""
 
-        for j, targets in enumerate(self.target_groups):
+        for j, _ in enumerate(self.target_groups):
             indices = torch.where(self.target_class == j)[0]
-            for i, target in enumerate(targets):
-                # Keep track of all-time covered targets
-                self.all_time_covered_targets[indices] += self.covered_targets[indices]
-                self.all_time_agent_covered_targets[indices] += self.agent_is_covering[indices]
-
-                # Move covered targets outside the environment
-                indices_selected = torch.where(self.covered_targets[indices,self.target_class[indices],i])[0]
-                indices_selected = indices[indices_selected]
-                target.state.pos[indices_selected,:] = self._get_outside_pos(None)[
-                    indices_selected
-                ]
+            self.all_time_covered_targets[indices] += self.covered_targets[indices]
+            self.all_time_agent_covered_targets[indices] += self.agent_is_covering[indices]
                 
     def _get_outside_pos(self, env_index):
         """Get a position far outside the environment to hide entities."""
@@ -372,11 +400,23 @@ class MyLanguageScenario(BaseScenario):
         mask_idle = self.occupancy_grid.states == IDLE
         
         # Compute the reward
-        rew[mask_idle] = (agent.state.vel[mask_idle] ** 2).sum(dim=-1) * self.termination_penalty_coeff
+        rew[mask_idle] = (agent.state.vel[mask_idle] ** 2).sum(dim=-1) * self.termination_penalty_coeff * 2
         rew[mask_explore] = exploration_reward(agent,self)[mask_explore]
         rew[mask_navigate] = navigation_reward(agent,self)[mask_navigate]
-        rew[mask_defend_tight] = defend_reward(agent,self, DEFEND_TIGHT)[mask_defend_tight]
-        rew[mask_defend_wide] = defend_reward(agent,self, DEFEND_WIDE)[mask_defend_wide]
+        rew[mask_defend_tight] = defend_reward(agent,self, DEFEND_TIGHT)[mask_defend_tight] * 0.3
+        rew[mask_defend_wide] = defend_reward(agent,self, DEFEND_WIDE)[mask_defend_wide] * 0.3
+        
+        # Print mean rewards per task if at step 100
+        if self.step_count % 200 == 0:
+            print(
+                f"Step: {self.step_count}, "
+                f"Explore: {rew[mask_explore].mean().item():.2f}, "
+                f"Navigate: {rew[mask_navigate].mean().item():.2f}, "
+                f"Defend Tight: {rew[mask_defend_tight].mean().item():.2f}, "
+                f"Defend Wide: {rew[mask_defend_wide].mean().item():.2f}, "
+                f"Idle: {rew[mask_idle].mean().item():.2f}, "
+                f"Total: {rew.mean().item():.2f}"
+            )
 
         return self.reward_scale_factor * rew
 
@@ -525,7 +565,7 @@ class MyLanguageScenario(BaseScenario):
         # Render Instruction Sentence
         if self.llm_activate:
             try:
-                sentence = self.occupancy_grid.summary[env_index]
+                sentence = self.occupancy_grid.response[env_index]
                 geom = rendering.TextLine(
                     text=sentence,
                     font_size=6
@@ -545,7 +585,6 @@ class MyLanguageScenario(BaseScenario):
         
         states = self.occupancy_grid.states
         B = self.world.batch_dim
-
         dones = torch.full((B,), False, device=self.world.device)
 
         mask_explore = states == EXPLORE

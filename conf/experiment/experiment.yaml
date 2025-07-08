@@ -4,7 +4,7 @@ train_device: cpu
 render: true
 evaluation: true
 share_policy_params: true
-loggers: [csv]
+loggers: [wandb]
 
 buffer_device: "cpu"
 prefer_continuous_actions: True

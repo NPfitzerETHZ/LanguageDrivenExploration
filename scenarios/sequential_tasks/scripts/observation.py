@@ -50,7 +50,6 @@ def observation(agent, env):
         
     # === LLM sentence embedding ===
     if env.llm_activate:
-        obs_dict["task"] = env.occupancy_grid.observe_task_embeddings()
         obs_dict["subtask"] = env.occupancy_grid.observe_subtask_embeddings()
 
     # === Histories ===
@@ -81,7 +80,18 @@ def observation(agent, env):
     
     # === Occupancy Grid ===
     obs_dict["grid_obs"] = env.occupancy_grid.internal_grid.get_grid_observation_2d(pos, env.mini_grid_radius * 7)
-        
+    
+    # Event Observations
+    
+    # === A: Found Flag ===
+    obs_components.append(agent.num_covered_targets.unsqueeze(1))
+    # === B: Holding Flag or Not ===
+    obs_components.append(agent.holding_flag.unsqueeze(1).float())
+    # === C: Spotted Enemy ===
+    obs_components.append(agent.spotted_enemy.unsqueeze(1).float())
+    # === D: On-base Flag ===
+    obs_components.append(agent.on_base.unsqueeze(1).float())
+    
     # === Pose ===
     obs_dict["pos"] = pos_norm
     obs_dict["vel"] = vel_norm

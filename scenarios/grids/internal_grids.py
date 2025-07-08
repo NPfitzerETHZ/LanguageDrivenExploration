@@ -28,6 +28,7 @@ class InternalOccupancyGrid(CoreGrid):
         mini_grid_radius: int,
         grid_targets: torch.Tensor,      # (ALL, H, W)
         env_index: torch.Tensor = None,  # (B,)
+        despawn_targets: bool = True,  # if True, despawn targets that are visited
         ):
         
         if env_index is None:
@@ -39,7 +40,8 @@ class InternalOccupancyGrid(CoreGrid):
         # 1) mark targets the agents are standing on
         visited = grid_targets[env_index, gy, gx] == TARGET
         self.grid_found_targets[env_index[visited], gy[visited], gx[visited]] = VISITED_TARGET
-        grid_targets[env_index[visited], gy[visited], gx[visited]] = EMPTY                      # despawn
+        if despawn_targets:
+            grid_targets[env_index[visited], gy[visited], gx[visited]] = EMPTY                      # despawn
 
         # 2) copy current field of view into observation map
         b = env_index[:, None, None]                                          # (B,1,1)
@@ -47,7 +49,7 @@ class InternalOccupancyGrid(CoreGrid):
         mini = grid_targets[b, y_rng[..., None], x_rng[:, None, :]]
         self.grid_observed_targets[b, y_rng[..., None], x_rng[:, None, :]] = mini
 
-        # 3) make sure visited cells also show up in the observation map
+        # 3) make sure visited targets also show up in the observation map
         mask = self.grid_found_targets == VISITED_TARGET             # (B,H,W) bool
         self.grid_observed_targets[mask] = VISITED_TARGET
 

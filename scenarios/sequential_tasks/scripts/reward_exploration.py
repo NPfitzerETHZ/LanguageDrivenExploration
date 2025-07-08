@@ -161,7 +161,7 @@ def compute_exploration_rewards(agent, pos: torch.Tensor, env):
             )
 
     grid_targets = env.occupancy_grid.environment.grid_targets
-    env.occupancy_grid.internal_grid.update(pos, env.mini_grid_radius, grid_targets)
+    env.occupancy_grid.internal_grid.update(pos, env.mini_grid_radius, grid_targets, despawn_targets=False)
 
 def compute_termination_rewards(agent, env):
     """

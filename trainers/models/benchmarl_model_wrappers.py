@@ -253,7 +253,7 @@ class MyModel(Model):
                     dim=-2,
                 )
             else:
-                res = self.mlp[0](input)
+                res = self.mlp[0](x)
 
         tensordict.set(self.out_key, res)
         return tensordict
