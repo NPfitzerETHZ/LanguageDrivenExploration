@@ -4,6 +4,7 @@ from benchmarl.environments import VmasTask
 from torchrl.envs import VmasEnv
 from benchmarl.experiment import Experiment, ExperimentConfig
 from benchmarl.algorithms import MappoConfig
+from benchmarl.models.common import ModelConfig, Model
 from hydra.utils import instantiate
 from utils.utils import _load_class
 import importlib
@@ -61,10 +62,14 @@ def benchmarl_setup_experiment(cfg: DictConfig) -> Experiment:
     critic_model = instantiate(cfg.model.critic_model)
     critic_model.activation_class = _load_class(critic_model.activation_class)
     critic_model.layer_class = _load_class(critic_model.layer_class)
-    if getattr(critic_model, "use_gnn", False):
-        critic_model.gnn_class = _load_class(critic_model.gnn_class)
-    else:
-        critic_model.gnn_class = None
+
+    # ---------- GNN-CNN BACKBONE ----------
+    gnn_cnn_backbone: ModelConfig = instantiate(cfg.model.gnn_cnn_backbone)
+    gnn_cnn_backbone.gnn_class = _load_class(gnn_cnn_backbone.gnn_class)
+    gnn_cnn_backbone.activation_class = actor_model.activation_class
+    gnn_cnn_backbone.layer_class = actor_model.layer_class
+    actor_model.state_model_config = gnn_cnn_backbone
+    critic_model.state_model_config = gnn_cnn_backbone
 
     # ---------- EXPERIMENT CONFIG ----------
     exp_cfg = ExperimentConfig(**cfg.experiment)
@@ -72,7 +77,6 @@ def benchmarl_setup_experiment(cfg: DictConfig) -> Experiment:
     exp_cfg.save_folder.mkdir(exist_ok=True, parents=True)
 
     # ---------- RETURN EXPERIMENT ----------
-
     return Experiment(
         task=task,
         algorithm_config=algorithm_config,
@@ -81,4 +85,3 @@ def benchmarl_setup_experiment(cfg: DictConfig) -> Experiment:
         seed=cfg.seed,
         config=exp_cfg,
     )
-

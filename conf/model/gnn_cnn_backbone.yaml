@@ -1,0 +1,26 @@
+gnn_cnn_backbone:
+  _target_: trainers.models.gnn_cnn_backbone.GNN_CNN_BackBoneConfig
+
+  # ─── Feature keys & sizes ────────────────────────────────────────────────────
+  position_key: pos         # 2-D agent positions
+  pos_features: 2
+  velocity_key: vel
+  vel_features: 2
+  grid_key: grid_obs
+  exclude_pos_from_node_features: false
+
+  # ─── CNN ─────────────────────────────────────────────────────
+  use_conv_2d: true
+  cnn_emb_dim : 32
+  cnn_filters: 32
+  cnn_spatial: 3
+
+  # ─── GNN ────────────────────────────────────────────────────────────────
+  topology: full
+  edge_radius: 2.0
+  gnn_emb_dim: 128
+  self_loops: false
+  gnn_class: torch_geometric.nn.conv.GATv2Conv
+  gnn_kwargs:
+    add_self_loops: true
+    residual: true

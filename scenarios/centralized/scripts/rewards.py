@@ -150,9 +150,6 @@ def compute_covering_rewards(env):
     """
     env.shared_covering_rew[:] = 0
     
-    # if env.llm_activate and env.n_targets > 0:
-    #     env.occupancy_grid.update_multi_target_gaussian_heading(env.all_time_covered_targets,env.target_class)
-        
     for agent in env.world.agents:
         env.shared_covering_rew += compute_agent_reward(agent, env)
         
@@ -177,6 +174,7 @@ def compute_exploration_rewards(agent, pos, env):
             pos, heading_exploration_rew_coeff=env.heading_exploration_rew_coeff
         )
         
+        # This is an idea for detecting if the team has done full coverage
         env.occupancy_grid.update_heading_coverage_ratio()
 
         if env.comm_dim > 0:

@@ -1,11 +1,11 @@
 model_shared:
-  use_encoder: false
+  use_encoder: true
   use_gnn: true
   use_conv_2d: true
-  gnn_emb_dim: 256
+  gnn_emb_dim: 128
   encoder_dim: 128
   encoder_num_cells: [128]
   comms_radius: 1.0
-  cnn_emb_dim : 64
-  cnn_filters: 64
-  cnn_spatial: 4
+  cnn_emb_dim : 32
+  cnn_filters: 32
+  cnn_spatial: 3

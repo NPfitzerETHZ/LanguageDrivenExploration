@@ -19,6 +19,7 @@ actor_model:
   sentence_key: sentence_embedding
   grid_key: grid_obs
   target_key: target_obs
+  obstacle_key: obstacle_obs
   exclude_pos_from_node_features: false
 
   # ─── MLP head ────────────────────────────────────────────────────────────────
@@ -28,6 +29,14 @@ actor_model:
 
   # ─── Toggles ─────────────────────────────────────────────────────────────────
   use_gnn: ${..model_shared.use_gnn}
-  use_sentence_encoder: false
+  use_encoder: ${..model_shared.use_encoder}
   use_conv_2d: ${..model_shared.use_conv_2d}
-  emb_dim: 64
+
+  cnn_emb_dim : ${..model_shared.cnn_emb_dim}
+  cnn_filters: ${..model_shared.cnn_filters}
+  cnn_spatial: ${..model_shared.cnn_spatial}
+
+  gnn_emb_dim: ${..model_shared.gnn_emb_dim}
+
+  encoder_dim: ${..model_shared.encoder_dim}
+  encoder_num_cells: ${..model_shared.encoder_num_cells}

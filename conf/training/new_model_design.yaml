@@ -1,0 +1,10 @@
+# @package _global_
+defaults:
+  - /experiment/experiment
+  - /model/gnn_cnn_backbone
+  - /model/actor    # actor-network params
+  - /model/critic   # critic-network params
+  - /task/decentralized_new_model_design
+  - /algorithm/mappo
+
+seed: 1

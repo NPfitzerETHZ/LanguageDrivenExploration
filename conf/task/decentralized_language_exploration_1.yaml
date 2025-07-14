@@ -1,11 +1,12 @@
 
 name: SAMPLING                          # maps to VmasTask.SAMPLING
-scenario_class: scenarios.centralized.multi_agent_llm_exploration.MyLanguageScenario
+scenario_class: scenarios.decentralized.decentralized_multi_agent_llm_exploration.MyLanguageScenario
 
 params:
   # === Map & Scenario Layout ===
   x_semidim: 1.0
   y_semidim: 1.0
+  covering_range: 0.15
   agent_radius: 0.03
   n_obstacles: 0
 
@@ -63,7 +64,7 @@ params:
   use_team_level_target_count: false
 
   # === Grid Settings ===
-  num_grid_cells: 1600
+  num_grid_cells: 1024
   mini_grid_radius: 1
 
   # === Movement & Dynamics ===
@@ -86,7 +87,7 @@ params:
   # === External Inputs ===
   data_json_path: data/language_data_complete_target_scale_new.json
   decoder_model_path: decoders/llm0_decoder_model_grid_scale.pth
-  use_decoder: true
+  use_decoder: false
 
   # === Visuals ===
   viewer_zoom: 1

@@ -50,7 +50,7 @@ def observation(agent, env):
         
     # === LLM sentence embedding ===
     if env.llm_activate:
-        obs_dict["subtask"] = env.occupancy_grid.observe_subtask_embeddings()
+        obs_dict["sentence_embedding"] = env.occupancy_grid.observe_subtask_embeddings()
 
     # === Histories ===
     if env.observe_pos_history:

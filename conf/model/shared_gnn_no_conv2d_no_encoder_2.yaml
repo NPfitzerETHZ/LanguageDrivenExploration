@@ -1,5 +1,0 @@
-model_shared:
-  use_gnn: true
-  use_conv_2d: false
-  comms_radius: 1.0
-  use_sentence_encoder: false

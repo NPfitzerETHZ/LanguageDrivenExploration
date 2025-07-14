@@ -75,6 +75,9 @@ class MyModel(Model):
         pos_features: Optional[int],
         rot_features: Optional[int],
         vel_features: Optional[int],
+        encoder_dim: Optional[int],
+        encoder_num_cells: Optional[Sequence[int]],
+        use_encoder: bool,
         gnn_emb_dim: Optional[int],
         use_gnn: bool,
         use_conv_2d: bool,
@@ -96,8 +99,11 @@ class MyModel(Model):
         self.pos_features = pos_features
         self.vel_features = vel_features
         self.rot_features = rot_features
+        self.use_encoder = use_encoder
         self.use_gnn =      use_gnn
         self.use_conv_2d =  use_conv_2d
+        self.encoder_dim = encoder_dim
+        self.encoder_num_cells = encoder_num_cells
         self.gnn_emb_dim =  gnn_emb_dim
         self.cnn_emb_dim =  cnn_emb_dim
         self.exclude_pos_from_node_features = exclude_pos_from_node_features
@@ -155,9 +161,19 @@ class MyModel(Model):
             )
                 
             self.gnn = gnn_class(**gnn_kwargs).to(self.device)
+        
+        if self.use_encoder:
+            if encoder_dim is None:
+                raise ValueError("encoder_dim must be specified when use_encoder is True")
+            self.encoder = MLP(
+                in_features=self.input_spec[('agents', 'observation', self.sentence_key)].shape[-1],
+                out_features=encoder_dim,
+                device=self.device,
+                num_cells=encoder_num_cells,
+            )
             
 
-        self.mlp_in = self._environment_obs_dim()
+        self.mlp_in = self._environment_obs_dim() 
         self.mlp_in += self.gnn_emb_dim if self.use_gnn else self._n_node_in() 
         self.output_features = self.output_leaf_spec.shape[-1] 
         if self.input_has_agent_dim:
@@ -240,8 +256,11 @@ class MyModel(Model):
                 *batch_size, self.n_agents, self.gnn_emb_dim
             )
         
+        if self.use_encoder:
+            sentence = self.encoder(sentence)
+        
         # Stack all inputs
-        x = torch.cat([x, grid_target, grid_obstacle, sentence], dim=-1)
+        x = torch.cat([x , grid_target, grid_obstacle, sentence], dim=-1)
         if self.input_has_agent_dim:
             res = self.mlp.forward(x)
             if not self.output_has_agent_dim:
@@ -292,7 +311,10 @@ class MyModel(Model):
         # 2. Obstacles
         n += self.input_spec[('agents', 'observation', self.obstacle_key)].shape[-1]
         # Sentence embedding
-        n += self.input_spec[('agents', 'observation', self.sentence_key)].shape[-1]
+        if self.use_encoder:
+            n += self.encoder_dim
+        else:   
+            n += self.input_spec[('agents', 'observation', self.sentence_key)].shape[-1]
         
         return n
 
@@ -383,6 +405,7 @@ class MyModelConfig(ModelConfig):
 
     use_gnn: bool = MISSING
     use_conv_2d: bool = MISSING
+    use_encoder: bool = MISSING
 
     gnn_kwargs: Optional[dict] = None
 
@@ -391,6 +414,9 @@ class MyModelConfig(ModelConfig):
     num_cells: Optional[Sequence[int]] = None
     layer_class: Optional[Type[nn.Module]] = None
     activation_class: Optional[Type[nn.Module]] = None
+    
+    encoder_dim: Optional[int] = None
+    encoder_num_cells: Optional[Sequence[int]] = None
     
     gnn_emb_dim: Optional[int] = None
     gnn_class: Optional[Type[torch_geometric.nn.MessagePassing]] = None

@@ -7,6 +7,7 @@ from scenarios.grids.core_grid import CoreGrid
 from scenarios.grids.environment_grids import TARGET, OBSTACLE
 from scenarios.grids.internal_grids import InternalOccupancyGrid
 from scenarios.grids.environment_grids import EnvironmentGrid
+from scenarios.sequential_tasks.scripts.rnn_model import EventRNN
 
 from vmas.simulator.core import Landmark
 import torch.nn as nn
@@ -53,6 +54,13 @@ def load_decoder(model_path, embedding_size, device):
     decoder_model = Decoder(emb_size= embedding_size, out_size=DECODER_OUTPUT_SIZE)
     decoder_model.load_state_dict(torch.load(model_path, map_location=device))
     decoder_model.eval()
+    
+def load_sequence_model(model_path, embedding_size, event_size, state_size, device):
+    
+    global sequence_model
+    sequence_model = EventRNN(event_dim=event_size, y_dim=embedding_size, latent_dim=embedding_size, state_dim=state_size)
+    sequence_model.load_state_dict(torch.load(model_path, map_location=device))
+    sequence_model.eval()
     
 def load_task_data(
     json_path,
@@ -341,6 +349,14 @@ class LanguageGrid(CoreGrid):
 
         return torch.stack((x, y), dim=1)
     
+    def get_subtask_embedding_from_rnn(self, env_index: torch.Tensor) -> torch.Tensor:
+        """ Get the subtask embedding from the RNN model for the given environments. """
+       
+       
+        
+        # Get the subtask embeddings for the given environments
+        return self.subtask_embeddings[env_index].unsqueeze(1)
+    
     def generate_random_grid(
         self,
         env_index: torch.Tensor,
@@ -595,6 +611,13 @@ class LanguageGrid(CoreGrid):
         return new_cell_bonus * heading_val
         #return heading_val * heading_exploration_rew_coeff  # Open question: Should the heading bonus degrade after visiting the cell or not? 
     
+    def compute_subtask_embedding_from_rnn(self, env_index: torch.Tensor, event: torch.Tensor):
+        """ Get the subtask embedding from the RNN model for the given environments. """
+        e = event[env_index].unsqueeze(1)
+        y = self.task_embeddings[env_index].unsqueeze(1)
+        subtask = sequence_model(e, y)
+        self.subtask_embeddings[env_index] = subtask.squeeze(1)
+        
     def reset_all(self):
 
         self.grid_gaussian_heading.zero_()

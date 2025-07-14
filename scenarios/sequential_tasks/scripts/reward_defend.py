@@ -12,21 +12,18 @@ def compute_reward(agent, env, def_type: int):
         if is_first:
 
             # Avoid collisions with each other
-            if env.agent_collision_penalty != 0:
-                for a in env.world.policy_agents:
-                    a.collision_rew[:] = 0
-
-                for i, a in enumerate(env.world.agents):
-                    for j, b in enumerate(env.world.agents):
-                        if j <= i:
-                            continue
-                        collision = (
-                            env.world.get_distance(a, b) <= env.min_collision_distance
-                        )
-                        if a.action_script is None:
-                            a.collision_rew[collision] += env.collision_reward
-                        if b.action_script is None:
-                            b.collision_rew[collision] += env.collision_reward
+            for i, a in enumerate(env.world.agents):
+                for j, b in enumerate(env.world.agents):
+                    if i <= j:
+                        continue
+                    if env.world.collides(a, b):
+                        distance = env.world.get_distance(a, b)
+                        a.collision_rew[
+                            distance <= env.min_collision_distance
+                        ] += env.agent_collision_penalty 
+                        b.collision_rew[
+                            distance <= env.min_collision_distance
+                        ] += env.agent_collision_penalty 
 
         # stay close together (separation)
         agents_dist_shaping = (
@@ -47,10 +44,11 @@ def compute_reward(agent, env, def_type: int):
         agent.target_distance = torch.linalg.vector_norm(
             agent.state.pos - env.flock_target,
             dim=-1,
-        ) - env.desired_distance[def_type]
+        )
         
         # penalty for being far from the target
-        agent.dist_rew += (-1 * agent.target_distance * env.defend_dist_shaping_factor)
+        target_bonus = (agent.target_distance < env.desired_distance[def_type]).float() * env.target_proximity_reward
+        agent.dist_rew += (-1 * agent.target_distance * env.defend_dist_shaping_factor) + target_bonus
         
         agent_speed = torch.linalg.vector_norm(agent.state.vel, dim=-1)
         stillness_penalty = (agent_speed < env.stillness_speed_thresh).float() * env.stillness_penalty

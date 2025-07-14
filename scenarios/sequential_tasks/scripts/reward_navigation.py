@@ -26,10 +26,10 @@ def compute_reward(agent, env):
                     distance = env.world.get_distance(a, b)
                     a.collision_rew[
                         distance <= env.min_collision_distance
-                    ] += env.agent_collision_penalty * 0
+                    ] += env.agent_collision_penalty
                     b.collision_rew[
                         distance <= env.min_collision_distance
-                    ] += env.agent_collision_penalty * 0
+                    ] += env.agent_collision_penalty
 
     pos_reward = nav_pos_rew if env.nav_shared_rew else agent.nav_pos_rew
     return pos_reward + nav_final_rew + agent.collision_rew

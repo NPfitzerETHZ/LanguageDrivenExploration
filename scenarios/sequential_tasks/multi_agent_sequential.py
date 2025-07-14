@@ -189,7 +189,7 @@ class MyLanguageScenario(BaseScenario):
             name="base",
             collide=False,
             movable=False,
-            shape=Box(length=self.occupancy_grid.cell_size_y * self.y_semidim * 6 ,width=self.occupancy_grid.cell_size_x * self.x_semidim * 6),
+            shape=Box(length=self.occupancy_grid.cell_size_y * self.y_semidim * 3 ,width=self.occupancy_grid.cell_size_x * self.x_semidim * 3),
             color=Color.YELLOW
         )
         world.add_landmark(self.base)
@@ -401,8 +401,8 @@ class MyLanguageScenario(BaseScenario):
         
         # Compute the reward
         rew[mask_idle] = (agent.state.vel[mask_idle] ** 2).sum(dim=-1) * self.termination_penalty_coeff * 2
-        rew[mask_explore] = exploration_reward(agent,self)[mask_explore]
-        rew[mask_navigate] = navigation_reward(agent,self)[mask_navigate]
+        rew[mask_explore] = exploration_reward(agent,self)[mask_explore] 
+        rew[mask_navigate] = navigation_reward(agent,self)[mask_navigate] * 2.0
         rew[mask_defend_tight] = defend_reward(agent,self, DEFEND_TIGHT)[mask_defend_tight] * 0.3
         rew[mask_defend_wide] = defend_reward(agent,self, DEFEND_WIDE)[mask_defend_wide] * 0.3
         
@@ -451,9 +451,46 @@ class MyLanguageScenario(BaseScenario):
 
         if self.use_velocity_controller and not self.use_kinematic_model:
             agent.controller.process_force()
+        
+    def consturct_event(self):
+        """
+        This function is a placeholder for the team-event GNN model.
+        We collect agent-level events and construct a team-level event
+        """
+        
+        # Holding Flag
+        holding_flag = torch.any(
+            torch.stack([a.holding_flag for a in self.world.agents], dim=-1),
+            dim=-1,
+        )
+        # Spotted Enemy
+        spotted_enemy = torch.any(
+            torch.stack([a.spotted_enemy for a in self.world.agents], dim=-1),
+            dim=-1,
+        )
+        # On Base
+        on_base = torch.all(
+            torch.stack([a.on_base for a in self.world.agents], dim=-1),
+            dim=-1,
+        )
+        
+        return torch.stack(
+            [holding_flag, spotted_enemy, on_base],
+            dim=-1
+        ).to(self.world.device)
+        
     
     def post_step(self):
+        
+        
+        # If we are using sequence model, compute the next subtask embedding
+        if self.llm_activate and self.use_sequence_model:
+            # Get the subtask embedding from the RNN model
+            env_index = torch.arange(self.world.batch_dim, device=self.world.device)
+            event = self.consturct_event()
+            self.occupancy_grid.compute_subtask_embedding_from_rnn(env_index, event)
 
+        # Compute team spread
         team_pos = torch.stack(
             [agent.state.pos       
             for agent in self.world.agents],
@@ -593,9 +630,9 @@ class MyLanguageScenario(BaseScenario):
                 mask_explore, self.target_class[mask_explore]
             ].all(dim=-1)
 
-        mask_navigate = states == NAVIGATE
-        if mask_navigate.any():
-            dones[mask_navigate] = self.all_base_reached[mask_navigate]
+        # mask_navigate = states == NAVIGATE
+        # if mask_navigate.any():
+        #     dones[mask_navigate] = self.all_base_reached[mask_navigate]
 
         # No need to explicitly handle DEFEND_TIGHT and DEFEND_WIDE;
         # `dones` is initialized to False

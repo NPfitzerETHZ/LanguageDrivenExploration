@@ -1,4 +1,0 @@
-deployment
-scenarios
-trainers
-utils

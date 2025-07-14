@@ -46,10 +46,10 @@ params:
   prediction_horizon_steps: 1
 
   # === Agent Communication & GNNs ===
-  use_gnn: ${model.model_shared.use_gnn}
-  use_conv_2d: ${model.model_shared.use_conv_2d}
+  use_gnn: true
+  use_conv_2d: ${model.gnn_cnn_backbone.use_conv_2d}
   comm_dim: 0
-  comms_radius: ${model.model_shared.comms_radius}
+  comms_radius: ${model.gnn_cnn_backbone.edge_radius}
 
   # === Observation Settings ===
   observe_grid: true
@@ -87,7 +87,7 @@ params:
   # === External Inputs ===
   data_json_path: data/language_data_complete_target_scale.json
   decoder_model_path: decoders/llm0_decoder_model_grid_scale.pth
-  use_decoder: true
+  use_decoder: false
 
   # === Visuals ===
   viewer_zoom: 1

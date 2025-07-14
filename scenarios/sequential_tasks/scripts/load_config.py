@@ -35,10 +35,10 @@ PARAMS = [
     # --- Defend -------------------------------------------------------------
     ("defend_behaviour_factor", 1.0), ("defend_dist_shaping_factor", 1.0),
     ("desired_distance", {DEFEND_TIGHT: 0.1, DEFEND_WIDE: 0.4}),  # {DEFEND_TIGHT: 0.2, DEFEND_WIDE: 0.4}
-    ("stillness_speed_thresh", 0.05), ("stillness_penalty", -0.25),
+    ("stillness_speed_thresh", 0.05), ("stillness_penalty", -0.25), ("target_proximity_reward", 0.5),
     
     # --- Navigation ---------------------------------------------------------
-    ("nav_pos_shaping_factor", 1.0), ("nav_final_reward", 5.0), ("nav_shared_rew", False),
+    ("nav_pos_shaping_factor", 1.0), ("nav_final_reward", 0.5), ("nav_shared_rew", False),
     
     # --- Lidar & Sensing ----------------------------------------------------
     ("use_lidar", False), ("use_target_lidar", False),

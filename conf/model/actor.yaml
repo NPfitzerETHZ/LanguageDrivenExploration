@@ -1,0 +1,19 @@
+actor_model:
+  # experiment/model/actor_model.yaml
+  _target_: trainers.models.actor_critic.MyModelConfig
+
+  # ─── Feature keys & sizes ────────────────────────────────────────────────────
+  sentence_key: sentence_embedding
+  target_key: target_obs
+  obstacle_key: obstacle_obs
+
+  # ─── MLP head ────────────────────────────────────────────────────────────────
+  num_cells: [256, 256]
+  layer_class: torch.nn.Linear
+  activation_class: torch.nn.ReLU
+
+  # ─── Toggles ─────────────────────────────────────────────────────────────────
+  use_encoder: true
+  encoder_dim: 128
+  encoder_num_cells: [128, 128]
+  gnn_emb_dim: 128

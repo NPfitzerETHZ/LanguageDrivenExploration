@@ -29,9 +29,14 @@ actor_model:
 
   # ─── Toggles ─────────────────────────────────────────────────────────────────
   use_gnn: ${..model_shared.use_gnn}
+  use_encoder: ${..model_shared.use_encoder}
   use_conv_2d: ${..model_shared.use_conv_2d}
-  gnn_emb_dim: 128
 
   cnn_emb_dim : ${..model_shared.cnn_emb_dim}
   cnn_filters: ${..model_shared.cnn_filters}
   cnn_spatial: ${..model_shared.cnn_spatial}
+
+  gnn_emb_dim: ${..model_shared.gnn_emb_dim}
+  
+  encoder_dim: ${..model_shared.encoder_dim}
+  encoder_num_cells: ${..model_shared.encoder_num_cells}

@@ -5,11 +5,14 @@ critic_model:
   # (No GNN for the critic -- we drop the topology/edge-radius fields)
 
   # ─── Feature keys ────────────────────────────────────────────────────────────
-  sentence_key: sentence_embedding
-  position_key: pos
+  position_key: pos         # 2-D agent positions
+  pos_features: 2
   velocity_key: vel
+  vel_features: 2
+  sentence_key: sentence_embedding
   grid_key: grid_obs
   target_key: target_obs
+  obstacle_key: obstacle_obs
   exclude_pos_from_node_features: false
 
   # ─── MLP head ────────────────────────────────────────────────────────────────
@@ -18,7 +21,15 @@ critic_model:
   activation_class: torch.nn.ReLU
 
   # ─── Toggles ─────────────────────────────────────────────────────────────────
-  use_gnn: false               # critic is pure MLP
-  use_sentence_encoder: false
+  use_gnn: false
+  use_encoder: ${..model_shared.use_encoder}
   use_conv_2d: ${..model_shared.use_conv_2d}
-  emb_dim: 64
+
+  cnn_emb_dim : ${..model_shared.cnn_emb_dim}
+  cnn_filters: ${..model_shared.cnn_filters}
+  cnn_spatial: ${..model_shared.cnn_spatial}
+
+  gnn_emb_dim: ${..model_shared.gnn_emb_dim}
+  
+  encoder_dim: ${..model_shared.encoder_dim}
+  encoder_num_cells: ${..model_shared.encoder_num_cells}

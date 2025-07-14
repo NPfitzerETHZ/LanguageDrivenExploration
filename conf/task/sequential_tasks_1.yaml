@@ -8,13 +8,15 @@ params:
   y_semidim: 1.0
   agent_radius: 0.03
   n_obstacles: 0
+  covering_range: 0.15         # <-- Added
+  lidar_range: 0.15            # <-- Added
 
   # === Agent/Target Counts & Behavior ===
   n_agents: 3
   agents_per_target: 1
-  n_targets_per_class: 1
+  n_targets_per_class: 4
   n_target_classes: 1
-  n_targets: 1
+  n_targets: 4
   done_at_termination: false
 
   # === Rewards ===
@@ -40,13 +42,22 @@ params:
   # === Defend Rewards ===
   defend_behaviour_factor: 1.0
   defend_dist_shaping_factor: 1.0
+  desired_distance:             # <-- Added
+    2: 0.1                      # DEFEND_TIGHT = 2
+    3: 0.4                      # DEFEND_WIDE = 3
+  stillness_speed_thresh: 0.05 # <-- Added
+  stillness_penalty: -0.25     # <-- Added
+  target_proximity_reward: 0.5 # <-- Added
 
   # === Navigation Rewards ===
   nav_pos_shaping_factor: 1.0
   nav_final_reward: 10.0
+  nav_shared_rew: false        # <-- Added
 
   # === Lidar & Sensing ===
   use_lidar: false
+  n_lidar_rays_entities: 8
+  n_lidar_rays_agents: 12
   max_agent_observation_radius: 0.3
   prediction_horizon_steps: 1
 
@@ -90,7 +101,7 @@ params:
   llm_activate: true
 
   # === External Inputs ===
-  data_json_path: data/dataset_full.json
+  data_json_path: data/dataset_strong_embed.json
   decoder_model_path: decoders/llm0_decoder_model_grid_scale.pth
   use_decoder: false
 

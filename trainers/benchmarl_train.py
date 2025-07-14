@@ -1,6 +1,7 @@
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from trainers.benchmarl_setup_experiment import benchmarl_setup_experiment
+#from trainers.benchmarl_setup_experiment_new import benchmarl_setup_experiment
 
 
 @hydra.main(config_path="../conf", config_name="config", version_base=None)

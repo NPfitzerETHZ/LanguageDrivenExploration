@@ -1,5 +1,4 @@
 import torch
-from typing import Union
 
 #from deployment.my_deployment import Agent as RosAgent
 #from scenarios.decentralized.agent.agent import DecentralizedAgent

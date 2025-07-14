@@ -1,10 +1,9 @@
-
-sampling_device: cpu
-train_device: cpu
-render: true
+sampling_device: cuda
+train_device: cuda
+render: True
 evaluation: true
 share_policy_params: true
-loggers: [wandb]
+loggers: [csv]
 
 buffer_device: "cpu"
 prefer_continuous_actions: True
@@ -26,7 +25,7 @@ exploration_eps_end: 0.01
 exploration_anneal_frames: null
 
 max_n_iters: null
-max_n_frames: 18000000
+max_n_frames: 9000000
 
 on_policy_collected_frames_per_batch: 30000
 on_policy_n_envs_per_worker: 125
@@ -43,7 +42,7 @@ off_policy_use_prioritized_replay_buffer: False
 off_policy_prb_alpha: 0.6
 off_policy_prb_beta: 0.4
 
-evaluation_interval: 120000
+evaluation_interval: 240000
 evaluation_episodes: 10
 evaluation_deterministic_actions: True
 
